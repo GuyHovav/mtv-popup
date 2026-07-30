@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
+import com.getcapacitor.CapConfig;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -15,32 +16,51 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Must happen BEFORE super.onCreate(): that call synchronously loads
+        // `config`'s server URL into the WebView, so overriding `config` here
+        // (left null otherwise, which BridgeActivity treats as "use capacitor
+        // .config.json's default") makes the very first navigation go
+        // straight to the shared video. Calling loadUrl() a second time
+        // *after* super.onCreate() instead was the previous approach, but it
+        // raced Capacitor's own initial loadUrl() with no ordering guarantee.
+        String sharedUrl = extractYoutubeUrl(getIntent());
+        if (sharedUrl != null) {
+            config = new CapConfig.Builder(this).setServerUrl(targetUrl(sharedUrl)).create();
+        }
         super.onCreate(savedInstanceState);
-        handleShareIntent(getIntent());
     }
 
     @Override
     public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleShareIntent(intent);
+        // Covers the app already being open (singleTask launch mode reuses
+        // the activity and delivers here instead of onCreate) — the bridge
+        // and WebView already exist and are idle, so a direct loadUrl is
+        // safe here, unlike the cold-start case handled above.
+        String sharedUrl = extractYoutubeUrl(intent);
+        if (sharedUrl != null) {
+            getBridge().getWebView().loadUrl(targetUrl(sharedUrl));
+        }
+    }
+
+    private static String targetUrl(String youtubeUrl) {
+        return BASE_URL + "/?url=" + Uri.encode(youtubeUrl);
     }
 
     // The YouTube app's share sheet always sends ACTION_SEND/text-plain with
     // the link embedded in free-form text (e.g. "Check this out: https://
     // youtu.be/abc123"), never a clean URL by itself — so the link has to be
     // pulled out of EXTRA_TEXT with a regex rather than used as-is.
-    private void handleShareIntent(Intent intent) {
-        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
-        if (!"text/plain".equals(intent.getType())) return;
+    private static String extractYoutubeUrl(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return null;
+        String type = intent.getType();
+        if (type == null || !type.startsWith("text/plain")) return null;
 
         String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
-        if (sharedText == null) return;
+        if (sharedText == null) return null;
 
         Matcher matcher = YOUTUBE_URL_PATTERN.matcher(sharedText);
-        if (!matcher.find()) return;
-
-        String targetUrl = BASE_URL + "/?url=" + Uri.encode(matcher.group());
-        getBridge().getWebView().post(() -> getBridge().getWebView().loadUrl(targetUrl));
+        return matcher.find() ? matcher.group() : null;
     }
 }
