@@ -14,12 +14,6 @@ const STATUS_MESSAGES = {
   'fetching-facts': 'Writing trivia for this one…',
 };
 
-// TEMPORARY (share-to-app debugging): captured at module scope, i.e. before
-// React mounts and before the share-param effect strips the query string, so
-// it stays a faithful record of the URL the WebView actually opened. Remove
-// this and the banner that renders it once share-to-app is confirmed.
-const INITIAL_SEARCH = window.location.search;
-
 export default function App() {
   const [status, setStatus] = useState('idle');
   const [errorMessage, setErrorMessage] = useState(null);
@@ -83,7 +77,16 @@ export default function App() {
     if (!sharedUrl) return;
     window.history.replaceState({}, '', window.location.pathname);
     const sharedVideoId = parseVideoId(sharedUrl);
-    if (sharedVideoId) handleSubmit(sharedVideoId);
+    if (sharedVideoId) {
+      handleSubmit(sharedVideoId);
+    } else {
+      // Without this the share silently no-ops, leaving the app looking like
+      // it was opened from the launcher with no hint that anything was sent.
+      setStatus('error');
+      setErrorMessage(
+        "That shared link doesn't point to a single video. Try sharing a specific video rather than a channel or playlist.",
+      );
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -123,20 +126,6 @@ export default function App() {
         <h1 className="app__title">📺 Pop-up Video</h1>
         <p className="app__subtitle">Paste any YouTube video and watch the trivia balloons pop.</p>
       </header>
-
-      {/* TEMPORARY share-to-app debug banner — remove with INITIAL_SEARCH. */}
-      <p
-        style={{
-          fontSize: '0.7rem',
-          fontFamily: 'monospace',
-          opacity: 0.75,
-          wordBreak: 'break-all',
-          margin: '0 0 0.5rem',
-        }}
-      >
-        dbg search={INITIAL_SEARCH || '(none)'} status={status}
-        {errorMessage ? ` err=${errorMessage}` : ''}
-      </p>
 
       <UrlForm onSubmit={handleSubmit} disabled={isBusy} />
 
