@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import UrlForm from './components/UrlForm.jsx';
 import YouTubePlayer from './components/YouTubePlayer.jsx';
 import PopupLayer from './components/PopupLayer.jsx';
-import { fetchOEmbed } from './lib/youtube.js';
+import { fetchOEmbed, parseVideoId } from './lib/youtube.js';
 import { postFacts } from './lib/api.js';
 import { useFactSync } from './hooks/useFactSync.js';
 import './styles/app.css';
@@ -67,6 +67,19 @@ export default function App() {
     setStatus('error');
     setErrorMessage(message);
   }
+
+  // Populated by the Android share-intent handler in MainActivity.java,
+  // which redirects here as `?url=<encoded YouTube link>` when the app is
+  // opened via "Share" from the YouTube app. Web visits never carry this
+  // param, so this is a no-op there.
+  useEffect(() => {
+    const sharedUrl = new URLSearchParams(window.location.search).get('url');
+    if (!sharedUrl) return;
+    window.history.replaceState({}, '', window.location.pathname);
+    const sharedVideoId = parseVideoId(sharedUrl);
+    if (sharedVideoId) handleSubmit(sharedVideoId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (status !== 'fetching-facts') return;

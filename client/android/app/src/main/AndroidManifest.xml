@@ -22,6 +22,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Lets the app appear as a share target (e.g. "Share" from the
+                 YouTube app) for any plain-text share, since YouTube's share
+                 sheet always sends a text/plain intent with the link inside
+                 EXTRA_TEXT rather than a typed video URL. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
         </activity>
 
         <provider
