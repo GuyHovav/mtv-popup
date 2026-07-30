@@ -3,6 +3,7 @@ package com.guyhovav.popupvideo;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
+import android.widget.Toast;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.CapConfig;
 import java.util.regex.Matcher;
@@ -23,9 +24,11 @@ public class MainActivity extends BridgeActivity {
         // straight to the shared video. Calling loadUrl() a second time
         // *after* super.onCreate() instead was the previous approach, but it
         // raced Capacitor's own initial loadUrl() with no ordering guarantee.
+        debugToast("onCreate intent: " + describeIntent(getIntent()));
         String sharedUrl = extractYoutubeUrl(getIntent());
         if (sharedUrl != null) {
             config = new CapConfig.Builder(this).setServerUrl(targetUrl(sharedUrl)).create();
+            debugToast("Overriding start URL: " + targetUrl(sharedUrl));
         }
         super.onCreate(savedInstanceState);
     }
@@ -34,6 +37,7 @@ public class MainActivity extends BridgeActivity {
     public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        debugToast("onNewIntent: " + describeIntent(intent));
         // Covers the app already being open (singleTask launch mode reuses
         // the activity and delivers here instead of onCreate) — the bridge
         // and WebView already exist and are idle, so a direct loadUrl is
@@ -42,6 +46,21 @@ public class MainActivity extends BridgeActivity {
         if (sharedUrl != null) {
             getBridge().getWebView().loadUrl(targetUrl(sharedUrl));
         }
+    }
+
+    // Temporary on-device diagnostic — no adb/logcat needed to see what the
+    // share intent actually looked like. Remove once share-to-app is
+    // confirmed working reliably.
+    private void debugToast(String message) {
+        Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
+    }
+
+    private static String describeIntent(Intent intent) {
+        if (intent == null) return "null";
+        String action = intent.getAction();
+        String type = intent.getType();
+        String extraText = intent.getStringExtra(Intent.EXTRA_TEXT);
+        return "action=" + action + " type=" + type + " extraText=" + extraText;
     }
 
     private static String targetUrl(String youtubeUrl) {
