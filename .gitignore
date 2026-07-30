@@ -6,5 +6,11 @@ client/dist/
 *.log
 .vercel
 
+# Android signing keystore — real signing key material, never committed,
+# regardless of where it ends up in the tree
+*.keystore
+*.jks
+keystore.properties
+
 # Claude Code local session/tool state — machine-specific, not project source
 .claude/
