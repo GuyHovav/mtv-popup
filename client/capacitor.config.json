@@ -3,7 +3,7 @@
   "appName": "Pop-up Video",
   "webDir": "dist",
   "server": {
-    "url": "https://PLACEHOLDER-set-after-vercel-deploy.vercel.app",
+    "url": "https://mtv-popup-client.vercel.app",
     "cleartext": false
   }
 }
