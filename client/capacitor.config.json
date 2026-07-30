@@ -1,0 +1,9 @@
+{
+  "appId": "com.guyhovav.popupvideo",
+  "appName": "Pop-up Video",
+  "webDir": "dist",
+  "server": {
+    "url": "https://PLACEHOLDER-set-after-vercel-deploy.vercel.app",
+    "cleartext": false
+  }
+}

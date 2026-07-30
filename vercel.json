@@ -1,0 +1,9 @@
+{
+  "framework": null,
+  "buildCommand": "npm run build -w client",
+  "outputDirectory": "client/dist",
+  "installCommand": "npm install",
+  "functions": {
+    "api/**/*.js": { "maxDuration": 30 }
+  }
+}

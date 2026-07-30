@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Pop-up Video</string>
+    <string name="title_activity_main">Pop-up Video</string>
+    <string name="package_name">com.guyhovav.popupvideo</string>
+    <string name="custom_url_scheme">com.guyhovav.popupvideo</string>
+</resources>

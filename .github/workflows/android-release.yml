@@ -1,0 +1,73 @@
+name: Android Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      note:
+        description: 'Manual test run (no tag/release created)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build client (Capacitor webDir fallback shell)
+        run: npm run build -w client
+
+      - name: Sync Capacitor Android project
+        working-directory: client
+        run: npx cap sync android
+
+      - name: Make gradlew executable
+        run: chmod +x client/android/gradlew
+
+      - name: Decode signing keystore
+        working-directory: client/android
+        run: echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+
+      - name: Write keystore.properties
+        working-directory: client/android
+        run: |
+          cat > keystore.properties <<EOF
+          storeFile=release.keystore
+          storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}
+          keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          EOF
+
+      - name: Build signed release APK
+        working-directory: client/android
+        run: ./gradlew assembleRelease
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: popupvideo-release-apk
+          path: client/android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Create GitHub Release and attach APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: client/android/app/build/outputs/apk/release/app-release.apk
