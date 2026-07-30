@@ -1,6 +1,5 @@
 package com.guyhovav.popupvideo;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
@@ -15,78 +14,42 @@ public class MainActivity extends BridgeActivity {
     private static final Pattern YOUTUBE_URL_PATTERN =
         Pattern.compile("https?://(?:www\\.)?(?:youtube\\.com/\\S+|youtu\\.be/\\S+)");
 
+    // BridgeActivity.load() calls onNewIntent(getIntent()) itself at the end
+    // of its own onCreate, so on a cold start onNewIntent runs while the
+    // launch intent is still current. Without this guard it would fire a
+    // second loadUrl for a page the CapConfig override below already opened —
+    // a full extra page load, and therefore an extra /api/facts call.
+    private boolean startupHandled = false;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Must happen BEFORE super.onCreate(): that call synchronously loads
         // `config`'s server URL into the WebView, so overriding `config` here
         // (left null otherwise, which BridgeActivity treats as "use capacitor
         // .config.json's default") makes the very first navigation go
-        // straight to the shared video. Calling loadUrl() a second time
-        // *after* super.onCreate() instead was the previous approach, but it
-        // raced Capacitor's own initial loadUrl() with no ordering guarantee.
-        Intent intent = getIntent();
-        String sharedUrl = extractYoutubeUrl(intent);
+        // straight to the shared video, with no second navigation to race.
+        String sharedUrl = extractYoutubeUrl(getIntent());
         if (sharedUrl != null) {
             config = new CapConfig.Builder(this).setServerUrl(targetUrl(sharedUrl)).create();
         }
         super.onCreate(savedInstanceState);
-        // Shown after super.onCreate() so the window/decor view already
-        // exists — a dialog shown any earlier risks a BadTokenException.
-        debugDialog("onCreate", intent, sharedUrl);
-        checkWebViewUrlAfterDelay();
+        startupHandled = true;
     }
 
     @Override
     public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        // Covers the app already being open (singleTask launch mode reuses
-        // the activity and delivers here instead of onCreate) — the bridge
-        // and WebView already exist and are idle, so a direct loadUrl is
-        // safe here, unlike the cold-start case handled above.
+        // Only the warm path: the app was already running (singleTask reuses
+        // the activity), so the bridge and WebView exist and are idle and a
+        // direct navigation is what's needed. The cold path is already
+        // covered by the config override in onCreate.
+        if (!startupHandled) return;
+
         String sharedUrl = extractYoutubeUrl(intent);
         if (sharedUrl != null) {
             getBridge().getWebView().loadUrl(targetUrl(sharedUrl));
         }
-        debugDialog("onNewIntent", intent, sharedUrl);
-        checkWebViewUrlAfterDelay();
-    }
-
-    // Reveals what the WebView actually ended up navigating to, a couple
-    // seconds after launch — decouples "did the native code compute the
-    // right URL" (already confirmed via debugDialog) from "did the WebView
-    // actually end up there."
-    private void checkWebViewUrlAfterDelay() {
-        getBridge().getWebView().postDelayed(() -> {
-            String currentUrl = getBridge().getWebView().getUrl();
-            new AlertDialog.Builder(this)
-                .setTitle("WebView URL after 2.5s")
-                .setMessage(String.valueOf(currentUrl))
-                .setPositiveButton("OK", null)
-                .show();
-        }, 2500);
-    }
-
-    // Temporary on-device diagnostic — no adb/logcat needed to see what the
-    // share intent actually looked like. Stays up until dismissed (unlike a
-    // Toast, which was getting cut off). Remove once share-to-app is
-    // confirmed working reliably.
-    private void debugDialog(String label, Intent intent, String extractedUrl) {
-        String message =
-            label
-                + "\n"
-                + describeIntent(intent)
-                + "\nextractedUrl="
-                + extractedUrl;
-        new AlertDialog.Builder(this).setTitle("Share debug").setMessage(message).setPositiveButton("OK", null).show();
-    }
-
-    private static String describeIntent(Intent intent) {
-        if (intent == null) return "null";
-        String action = intent.getAction();
-        String type = intent.getType();
-        String extraText = intent.getStringExtra(Intent.EXTRA_TEXT);
-        return "action=" + action + " type=" + type + " extraText=" + extraText;
     }
 
     private static String targetUrl(String youtubeUrl) {

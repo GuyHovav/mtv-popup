@@ -14,6 +14,12 @@ const STATUS_MESSAGES = {
   'fetching-facts': 'Writing trivia for this one…',
 };
 
+// TEMPORARY (share-to-app debugging): captured at module scope, i.e. before
+// React mounts and before the share-param effect strips the query string, so
+// it stays a faithful record of the URL the WebView actually opened. Remove
+// this and the banner that renders it once share-to-app is confirmed.
+const INITIAL_SEARCH = window.location.search;
+
 export default function App() {
   const [status, setStatus] = useState('idle');
   const [errorMessage, setErrorMessage] = useState(null);
@@ -117,6 +123,20 @@ export default function App() {
         <h1 className="app__title">📺 Pop-up Video</h1>
         <p className="app__subtitle">Paste any YouTube video and watch the trivia balloons pop.</p>
       </header>
+
+      {/* TEMPORARY share-to-app debug banner — remove with INITIAL_SEARCH. */}
+      <p
+        style={{
+          fontSize: '0.7rem',
+          fontFamily: 'monospace',
+          opacity: 0.75,
+          wordBreak: 'break-all',
+          margin: '0 0 0.5rem',
+        }}
+      >
+        dbg search={INITIAL_SEARCH || '(none)'} status={status}
+        {errorMessage ? ` err=${errorMessage}` : ''}
+      </p>
 
       <UrlForm onSubmit={handleSubmit} disabled={isBusy} />
 
