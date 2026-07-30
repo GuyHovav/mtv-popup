@@ -1,9 +1,9 @@
 package com.guyhovav.popupvideo;
 
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Bundle;
-import android.widget.Toast;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.CapConfig;
 import java.util.regex.Matcher;
@@ -24,20 +24,21 @@ public class MainActivity extends BridgeActivity {
         // straight to the shared video. Calling loadUrl() a second time
         // *after* super.onCreate() instead was the previous approach, but it
         // raced Capacitor's own initial loadUrl() with no ordering guarantee.
-        debugToast("onCreate intent: " + describeIntent(getIntent()));
-        String sharedUrl = extractYoutubeUrl(getIntent());
+        Intent intent = getIntent();
+        String sharedUrl = extractYoutubeUrl(intent);
         if (sharedUrl != null) {
             config = new CapConfig.Builder(this).setServerUrl(targetUrl(sharedUrl)).create();
-            debugToast("Overriding start URL: " + targetUrl(sharedUrl));
         }
         super.onCreate(savedInstanceState);
+        // Shown after super.onCreate() so the window/decor view already
+        // exists — a dialog shown any earlier risks a BadTokenException.
+        debugDialog("onCreate", intent, sharedUrl);
     }
 
     @Override
     public void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        debugToast("onNewIntent: " + describeIntent(intent));
         // Covers the app already being open (singleTask launch mode reuses
         // the activity and delivers here instead of onCreate) — the bridge
         // and WebView already exist and are idle, so a direct loadUrl is
@@ -46,13 +47,21 @@ public class MainActivity extends BridgeActivity {
         if (sharedUrl != null) {
             getBridge().getWebView().loadUrl(targetUrl(sharedUrl));
         }
+        debugDialog("onNewIntent", intent, sharedUrl);
     }
 
     // Temporary on-device diagnostic — no adb/logcat needed to see what the
-    // share intent actually looked like. Remove once share-to-app is
+    // share intent actually looked like. Stays up until dismissed (unlike a
+    // Toast, which was getting cut off). Remove once share-to-app is
     // confirmed working reliably.
-    private void debugToast(String message) {
-        Toast.makeText(getApplicationContext(), message, Toast.LENGTH_LONG).show();
+    private void debugDialog(String label, Intent intent, String extractedUrl) {
+        String message =
+            label
+                + "\n"
+                + describeIntent(intent)
+                + "\nextractedUrl="
+                + extractedUrl;
+        new AlertDialog.Builder(this).setTitle("Share debug").setMessage(message).setPositiveButton("OK", null).show();
     }
 
     private static String describeIntent(Intent intent) {
