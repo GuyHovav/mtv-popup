@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+client/dist/
+.DS_Store
+*.log
+.vercel
+
+# Claude Code local session/tool state — machine-specific, not project source
+.claude/
