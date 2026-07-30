@@ -33,6 +33,7 @@ public class MainActivity extends BridgeActivity {
         // Shown after super.onCreate() so the window/decor view already
         // exists — a dialog shown any earlier risks a BadTokenException.
         debugDialog("onCreate", intent, sharedUrl);
+        checkWebViewUrlAfterDelay();
     }
 
     @Override
@@ -48,6 +49,22 @@ public class MainActivity extends BridgeActivity {
             getBridge().getWebView().loadUrl(targetUrl(sharedUrl));
         }
         debugDialog("onNewIntent", intent, sharedUrl);
+        checkWebViewUrlAfterDelay();
+    }
+
+    // Reveals what the WebView actually ended up navigating to, a couple
+    // seconds after launch — decouples "did the native code compute the
+    // right URL" (already confirmed via debugDialog) from "did the WebView
+    // actually end up there."
+    private void checkWebViewUrlAfterDelay() {
+        getBridge().getWebView().postDelayed(() -> {
+            String currentUrl = getBridge().getWebView().getUrl();
+            new AlertDialog.Builder(this)
+                .setTitle("WebView URL after 2.5s")
+                .setMessage(String.valueOf(currentUrl))
+                .setPositiveButton("OK", null)
+                .show();
+        }, 2500);
     }
 
     // Temporary on-device diagnostic — no adb/logcat needed to see what the
