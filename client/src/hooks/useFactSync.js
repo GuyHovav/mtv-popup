@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const POLL_INTERVAL_MS = 250;
 const SEEK_THRESHOLD_SECONDS = 1.5;
 const LOOKBACK_WINDOW_SECONDS = 2;
-const BALLOON_DISPLAY_MS = 6500;
+const BALLOON_DISPLAY_MS = 9000;
 const MIN_GAP_MS = 3000;
 const MAX_GAP_MS = 5000;
 const YT_PLAYER_STATE_PLAYING = 1;
