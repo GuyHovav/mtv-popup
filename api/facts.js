@@ -1,5 +1,6 @@
 import { validateFactsRequest, ValidationError } from '../server/src/lib/validate.js';
 import { computeFactCount, generateFacts } from '../server/src/lib/facts.js';
+import { fetchGeniusContext } from '../server/src/lib/genius.js';
 
 // Vercel serverless function — mirrors server/src/routes/facts.js exactly,
 // just on Vercel's plain (req, res) handler signature instead of an Express
@@ -24,9 +25,10 @@ export default async function handler(req, res) {
 
   const { videoId, title, author, durationSeconds } = validated;
   const factCount = computeFactCount(durationSeconds);
+  const geniusContext = await fetchGeniusContext({ title, author });
 
   try {
-    const { facts, degraded } = await generateFacts({ title, author, durationSeconds, factCount });
+    const { facts, degraded } = await generateFacts({ title, author, durationSeconds, factCount, geniusContext });
     res.status(200).json({ videoId, facts, degraded });
   } catch (err) {
     console.error('Failed to generate facts:', err);

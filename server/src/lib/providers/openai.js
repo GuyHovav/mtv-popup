@@ -33,7 +33,7 @@ function sleep(ms) {
  * Calls OpenAI and returns a facts array, or throws. Used as the fallback
  * when Gemini fails outright.
  */
-export async function callOpenAI({ title, author, durationSeconds, factCount }) {
+export async function callOpenAI({ title, author, durationSeconds, factCount, geniusContext }) {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY not configured');
   }
@@ -48,7 +48,7 @@ export async function callOpenAI({ title, author, durationSeconds, factCount }) 
         model: 'gpt-4.1-mini',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildUserPrompt({ title, author, durationSeconds, factCount }) },
+          { role: 'user', content: buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext }) },
         ],
         response_format: buildResponseFormat(),
       });

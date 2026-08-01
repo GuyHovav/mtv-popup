@@ -25,6 +25,13 @@ Style:
   of this specific song, lean toward general/genre-level facts phrased
   honestly (e.g. "Songs from this era often...") rather than inventing false
   specifics about this exact track.
+- If real Genius song metadata is provided below (writer/producer credits,
+  sample/interpolation/cover relationships, curated "about" text), treat it
+  as verified and specific — not something to hedge or guess at. It's
+  curated data, distinct from your own background knowledge. Prioritize
+  weaving in samples, interpolations, or writer/producer credits from it
+  when present; they make excellent MOMENT-SPECIFIC or GENERAL facts. When
+  it's absent, fall back to the general/genre guidance above.
 - Spread facts across the whole duration — don't cluster them near the start.
 - If a fact's text references a part of the song's timeline (e.g. "the
   opening", "right from the start", "as the song winds down", "the outro"),
@@ -44,11 +51,14 @@ function formatMMSS(totalSeconds) {
   return `${m}:${s}`;
 }
 
-export function buildUserPrompt({ title, author, durationSeconds, factCount }) {
+export function buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext }) {
   const avgGapSeconds = Math.round(durationSeconds / factCount);
+  const geniusBlock = geniusContext
+    ? `\n\nReal song metadata from Genius (credits, sample/interpolation relationships, curated "about" text — use this for specific, accurate facts):\n${geniusContext}\n`
+    : '';
   return `Song: "${title}"
 Channel/Artist (from YouTube metadata): "${author}"
-Video duration: ${durationSeconds} seconds (${formatMMSS(durationSeconds)})
+Video duration: ${durationSeconds} seconds (${formatMMSS(durationSeconds)})${geniusBlock}
 
 Generate exactly ${factCount} pop-up trivia facts, spaced out across the
 full ${durationSeconds}-second duration (roughly every ${avgGapSeconds}s,

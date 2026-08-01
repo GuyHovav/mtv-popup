@@ -42,7 +42,7 @@ function sleep(ms) {
  * Calls Gemini and returns a facts array, or throws. Retries transient
  * errors (429/503) a few times before giving up.
  */
-export async function callGemini({ title, author, durationSeconds, factCount }) {
+export async function callGemini({ title, author, durationSeconds, factCount, geniusContext }) {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY not configured');
   }
@@ -55,7 +55,7 @@ export async function callGemini({ title, author, durationSeconds, factCount }) 
       // even standard -flash here.
       response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-lite',
-        contents: buildUserPrompt({ title, author, durationSeconds, factCount }),
+        contents: buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext }),
         config: {
           systemInstruction: SYSTEM_PROMPT,
           responseMimeType: 'application/json',

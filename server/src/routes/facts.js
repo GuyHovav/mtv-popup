@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { validateFactsRequest, ValidationError } from '../lib/validate.js';
 import { computeFactCount, generateFacts } from '../lib/facts.js';
+import { fetchGeniusContext } from '../lib/genius.js';
 
 const router = Router();
 
@@ -17,9 +18,10 @@ router.post('/', async (req, res) => {
 
   const { videoId, title, author, durationSeconds } = validated;
   const factCount = computeFactCount(durationSeconds);
+  const geniusContext = await fetchGeniusContext({ title, author });
 
   try {
-    const { facts, degraded } = await generateFacts({ title, author, durationSeconds, factCount });
+    const { facts, degraded } = await generateFacts({ title, author, durationSeconds, factCount, geniusContext });
     return res.json({ videoId, facts, degraded });
   } catch (err) {
     console.error('Failed to generate facts:', err);
