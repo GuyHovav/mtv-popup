@@ -154,3 +154,31 @@
     width: 100%;
   }
 }
+
+/* Rotating a phone to landscape while a video is loaded fills the screen
+   with it, popups included — gated on pointer:coarse so a wide desktop
+   browser window doesn't trigger this. We deliberately avoid the Fullscreen
+   API here: it would only show the fullscreened element's descendants, and
+   PopupLayer is a sibling of the video iframe, not a descendant, so it would
+   vanish. Expanding the shared .video-stage parent instead keeps popups
+   (which are positioned as percentages of it) working with no JS changes. */
+@media (orientation: landscape) and (pointer: coarse) {
+  .app:has(.video-stage) {
+    padding: 0;
+    max-width: none;
+  }
+
+  .app:has(.video-stage) > *:not(.video-stage) {
+    display: none;
+  }
+
+  .app:has(.video-stage) .video-stage {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    aspect-ratio: auto;
+    border-radius: 0;
+    z-index: 1000;
+  }
+}
