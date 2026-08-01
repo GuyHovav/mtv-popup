@@ -51,14 +51,44 @@ function formatMMSS(totalSeconds) {
   return `${m}:${s}`;
 }
 
+// Most pop/rock songs follow a fairly conventional structure. This gives
+// both the model (as a rough default in the prompt) and the deterministic
+// post-processing safety net (repositionFactsByLanguage, below) the same
+// shared notion of "where a chorus/bridge/etc. typically falls" for a song
+// of this specific duration — a heuristic, not this song's actual
+// structure, but better grounded than a blank guess.
+function computeSectionWindows(durationSeconds) {
+  const edgeWindow = Math.max(8, Math.round(durationSeconds * 0.12));
+  return [
+    { name: 'beginning', label: 'Intro/opening', start: 0, end: edgeWindow },
+    { name: 'chorus', label: 'First chorus/hook', start: durationSeconds * 0.2, end: durationSeconds * 0.45 },
+    { name: 'secondVerse', label: 'Second verse', start: durationSeconds * 0.4, end: durationSeconds * 0.55 },
+    { name: 'bridge', label: 'Bridge', start: durationSeconds * 0.65, end: durationSeconds * 0.82 },
+    { name: 'finalChorus', label: 'Final chorus/key change', start: durationSeconds * 0.78, end: durationSeconds * 0.92 },
+    { name: 'ending', label: 'Outro/ending', start: durationSeconds - edgeWindow, end: durationSeconds },
+  ];
+}
+
 export function buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext }) {
   const avgGapSeconds = Math.round(durationSeconds / factCount);
   const geniusBlock = geniusContext
     ? `\n\nReal song metadata from Genius (credits, sample/interpolation relationships, curated "about" text — use this for specific, accurate facts):\n${geniusContext}\n`
     : '';
+  const structureGuide = computeSectionWindows(durationSeconds)
+    .map((w) => `- ${w.label}: roughly ${formatMMSS(w.start)}-${formatMMSS(w.end)}`)
+    .join('\n');
+
   return `Song: "${title}"
 Channel/Artist (from YouTube metadata): "${author}"
 Video duration: ${durationSeconds} seconds (${formatMMSS(durationSeconds)})${geniusBlock}
+
+Most pop/rock songs follow a conventional structure. As a rough default
+when you don't have more specific knowledge of this song's actual
+structure, moments typically fall around:
+${structureGuide}
+(This is only a fallback convention, not a rule — if you have better,
+specific knowledge of this particular song's real structure, use that
+instead.)
 
 Generate exactly ${factCount} pop-up trivia facts, spaced out across the
 full ${durationSeconds}-second duration (roughly every ${avgGapSeconds}s,
@@ -105,42 +135,61 @@ export function computeFactCount(durationSeconds) {
 // positional language in its own text (a fact can say "the ending" and land
 // at 0:20 in a 4-minute song). Rather than trust any provider's numbers for
 // these, detect the language deterministically and reassign the timestamp
-// into the matching part of the timeline.
+// into the matching part of the timeline (using the same conventional-
+// structure windows given to the model in buildUserPrompt, see
+// computeSectionWindows above).
 const BEGINNING_PATTERN =
   /\b(?:the beginning|beginning of the song|starts? (?:off|out)|starting (?:off|out)|right (?:away|from the start)|from the (?:very )?start|opens? (?:with|up)|(?:the )?opening(?: moments| seconds)?|(?:the )?intro(?:duction)?|kicks? off|kicking off|early on|first (?:few )?(?:seconds|moments))\b/i;
 const ENDING_PATTERN =
   /\b(?:the ending|ending of the song|final(?:e|ly)?|(?:the )?closing(?: moments| seconds)?|(?:the )?outro|wraps? up|that's a wrap|conclu(?:des?|sion)|winds? down|fades? out|comes? to a close|last (?:few )?(?:seconds|moments|part|stretch)|as the song (?:ends|closes)|towards? the end\b)/i;
+const FINAL_CHORUS_PATTERN = /\b(?:final chorus|last chorus|key change|modulat(?:es?|ion))\b/i;
+const BRIDGE_PATTERN = /\b(?:the bridge|middle eight|middle-eight|breakdown|instrumental break)\b/i;
+const SECOND_VERSE_PATTERN = /\b(?:second verse|verse two|verse 2)\b/i;
+const CHORUS_PATTERN = /\b(?:the chorus|the hook|the drop|chorus kicks? in|hook kicks? in)\b/i;
+
+// Checked in this order — most specific first, so a fact matching multiple
+// categories lands in the more specific one rather than the most generic.
+// `chorus` is deliberately generic and checked after secondVerse/bridge/
+// finalChorus, so an unqualified "the chorus" only falls into this
+// fallback (first-chorus-shaped) window when nothing more specific already
+// matched — sidesteps having to determine *which* chorus occurrence a
+// fact means.
+const REPOSITION_CATEGORIES = [
+  { name: 'ending', pattern: ENDING_PATTERN },
+  { name: 'finalChorus', pattern: FINAL_CHORUS_PATTERN },
+  { name: 'bridge', pattern: BRIDGE_PATTERN },
+  { name: 'secondVerse', pattern: SECOND_VERSE_PATTERN },
+  { name: 'chorus', pattern: CHORUS_PATTERN },
+  { name: 'beginning', pattern: BEGINNING_PATTERN },
+];
 
 export function repositionFactsByLanguage(facts, durationSeconds) {
-  // Windows scale with song length: ~12% of the duration, floored so short
-  // clips still get a sensible sliver at each end.
-  const edgeWindow = Math.max(8, Math.round(durationSeconds * 0.12));
-  const beginningCutoff = edgeWindow;
-  const endingCutoff = durationSeconds - edgeWindow;
+  const windowByName = new Map(computeSectionWindows(durationSeconds).map((w) => [w.name, w]));
 
-  const beginningIdx = [];
-  const endingIdx = [];
+  const matchedIndices = new Map(REPOSITION_CATEGORIES.map((c) => [c.name, []]));
   facts.forEach((fact, i) => {
     const text = fact.text || '';
-    if (ENDING_PATTERN.test(text)) {
-      endingIdx.push(i);
-    } else if (BEGINNING_PATTERN.test(text)) {
-      beginningIdx.push(i);
-    }
+    const category = REPOSITION_CATEGORIES.find((c) => c.pattern.test(text));
+    if (category) matchedIndices.get(category.name).push(i);
   });
 
   const repositioned = [...facts];
+  REPOSITION_CATEGORIES.forEach(({ name }) => {
+    const indices = matchedIndices.get(name);
+    if (indices.length === 0) return;
 
-  beginningIdx.forEach((factIndex, order) => {
-    const span = Math.max(1, beginningCutoff - 2);
-    const t = 2 + Math.round((span * order) / Math.max(1, beginningIdx.length));
-    repositioned[factIndex] = { ...repositioned[factIndex], time_seconds: t };
-  });
+    const { start, end } = windowByName.get(name);
+    // Nudge the two edge categories 2s away from the literal 0/duration
+    // boundary — a fact at exactly 0:00 or the exact final second reads
+    // oddly. Middle categories are already away from the true edges.
+    const adjStart = name === 'beginning' ? Math.max(start, 2) : start;
+    const adjEnd = name === 'ending' ? Math.min(end, durationSeconds - 2) : end;
 
-  endingIdx.forEach((factIndex, order) => {
-    const span = Math.max(1, durationSeconds - 2 - endingCutoff);
-    const t = endingCutoff + Math.round((span * order) / Math.max(1, endingIdx.length));
-    repositioned[factIndex] = { ...repositioned[factIndex], time_seconds: t };
+    const span = Math.max(1, adjEnd - adjStart);
+    indices.forEach((factIndex, order) => {
+      const t = Math.round(adjStart + (span * order) / Math.max(1, indices.length));
+      repositioned[factIndex] = { ...repositioned[factIndex], time_seconds: t };
+    });
   });
 
   return repositioned.sort((a, b) => a.time_seconds - b.time_seconds);
