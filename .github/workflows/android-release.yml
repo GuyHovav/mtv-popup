@@ -60,14 +60,26 @@ jobs:
         working-directory: client/android
         run: ./gradlew assembleRelease
 
+      - name: Build signed release App Bundle (.aab, required for Play Store uploads)
+        working-directory: client/android
+        run: ./gradlew bundleRelease
+
       - name: Upload APK as workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: popupvideo-release-apk
           path: client/android/app/build/outputs/apk/release/app-release.apk
 
-      - name: Create GitHub Release and attach APK
+      - name: Upload AAB as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: popupvideo-release-aab
+          path: client/android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Create GitHub Release and attach APK + AAB
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: client/android/app/build/outputs/apk/release/app-release.apk
+          files: |
+            client/android/app/build/outputs/apk/release/app-release.apk
+            client/android/app/build/outputs/bundle/release/app-release.aab
