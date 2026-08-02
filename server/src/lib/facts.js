@@ -1,6 +1,6 @@
 import { callGemini } from './providers/gemini.js';
 import { callOpenAI } from './providers/openai.js';
-import { buildFallbackFacts, repositionFactsByLanguage, computeFactCount } from './promptBuilder.js';
+import { buildFallbackFacts, postProcessFacts, computeFactCount } from './promptBuilder.js';
 
 export { computeFactCount };
 
@@ -14,14 +14,14 @@ export { computeFactCount };
 export async function generateFacts({ title, author, durationSeconds, factCount, geniusContext }) {
   try {
     const facts = await callGemini({ title, author, durationSeconds, factCount, geniusContext });
-    return { facts: repositionFactsByLanguage(facts, durationSeconds), degraded: false };
+    return { facts: postProcessFacts(facts, durationSeconds), degraded: false };
   } catch (err) {
     console.warn('Gemini failed, trying OpenAI fallback:', err?.message || err);
   }
 
   try {
     const facts = await callOpenAI({ title, author, durationSeconds, factCount, geniusContext });
-    return { facts: repositionFactsByLanguage(facts, durationSeconds), degraded: false };
+    return { facts: postProcessFacts(facts, durationSeconds), degraded: false };
   } catch (err) {
     console.warn('OpenAI fallback also failed, using generic facts:', err?.message || err);
   }

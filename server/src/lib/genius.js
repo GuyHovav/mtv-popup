@@ -50,9 +50,19 @@ function cleanTitle(title) {
   return t.replace(/\s+/g, ' ').trim();
 }
 
-function buildSearchQuery(title, author) {
-  const query = `${cleanAuthor(author)} ${cleanTitle(title)}`.replace(/\s+/g, ' ').trim();
-  return query.slice(0, MAX_QUERY_LEN);
+// A cover's uploading channel has nothing to do with the original artist
+// Genius indexes, so the normal artist-match assumption breaks for these —
+// detect the signal so the query/confidence check can adapt.
+const COVER_PATTERN = /\bcover(?:\s+version)?\b/i;
+const ORIGINAL_ARTIST_PATTERN = /\boriginally\s+(?:by|performed\s+by)\s+([^()[\]]+)/i;
+
+// Cover-aware query: when the video is a cover with no stated original
+// artist, the channel name is noise, not signal — search on title alone.
+function buildSearchQuery(title, author, effectiveArtist, isCover) {
+  if (isCover && !effectiveArtist) {
+    return cleanTitle(title).slice(0, MAX_QUERY_LEN);
+  }
+  return `${effectiveArtist || cleanAuthor(author)} ${cleanTitle(title)}`.replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LEN);
 }
 
 function normalize(s) {
@@ -63,6 +73,15 @@ function isConfidentMatch(cleanedAuthor, hitArtistName) {
   const a = normalize(cleanedAuthor);
   const b = normalize(hitArtistName);
   if (a.length < 2 || b.length < 2) return false;
+  return a.includes(b) || b.includes(a);
+}
+
+// Fallback confidence signal for when there's no reliable artist to check
+// against (an unresolved cover) — require a strong title match instead.
+function isConfidentTitleMatch(cleanedTitle, hitTitle) {
+  const a = normalize(cleanedTitle);
+  const b = normalize(hitTitle);
+  if (a.length < 3 || b.length < 3) return false;
   return a.includes(b) || b.includes(a);
 }
 
@@ -136,24 +155,42 @@ export async function fetchGeniusContext({ title, author }) {
   }
 
   try {
-    const query = buildSearchQuery(title, author);
+    const isCover = COVER_PATTERN.test(title);
+    const originalArtistMatch = title.match(ORIGINAL_ARTIST_PATTERN);
+    const statedOriginalArtist = originalArtistMatch ? cleanAuthor(originalArtistMatch[1]) : null;
+    const effectiveArtist = statedOriginalArtist || (isCover ? null : cleanAuthor(author));
+
+    const query = buildSearchQuery(title, author, effectiveArtist, isCover);
     if (!query) return null;
 
     const searchData = await geniusFetch(`/search?q=${encodeURIComponent(query)}`);
     const hits = searchData?.response?.hits;
     if (!Array.isArray(hits) || hits.length === 0) return null;
 
-    const songHit = hits.find((h) => h.type === 'song');
-    if (!songHit?.result) return null;
+    const songHits = hits.filter((h) => h.type === 'song' && h.result).slice(0, 5);
+    if (songHits.length === 0) return null;
 
-    const cleanedAuthor = cleanAuthor(author);
-    const hitArtistName = songHit.result.primary_artist?.name || '';
-    if (!isConfidentMatch(cleanedAuthor, hitArtistName)) {
-      console.info(`Genius match rejected (low confidence): "${cleanedAuthor}" vs "${hitArtistName}"`);
+    const cleanedTitle = cleanTitle(title);
+
+    // Pass 1: artist-based match, when there's a reliable artist to check.
+    let matchedHit = null;
+    if (effectiveArtist) {
+      matchedHit = songHits.find((h) => isConfidentMatch(effectiveArtist, h.result.primary_artist?.name || ''));
+    }
+
+    // Pass 2: title-based fallback (covers a title-labeled cover with no
+    // stated original artist, and unlabeled covers where the artist check
+    // was always going to fail).
+    if (!matchedHit) {
+      matchedHit = songHits.find((h) => isConfidentTitleMatch(cleanedTitle, h.result.title || ''));
+    }
+
+    if (!matchedHit) {
+      console.info(`Genius match rejected (no confident candidate among top ${songHits.length}): "${query}"`);
       return null;
     }
 
-    const songId = songHit.result.id;
+    const songId = matchedHit.result.id;
     const songData = await geniusFetch(`/songs/${songId}?text_format=plain`);
     const song = songData?.response?.song;
     if (!song) return null;

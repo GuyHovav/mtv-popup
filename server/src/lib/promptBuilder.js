@@ -41,7 +41,13 @@ Style:
   just like the original show's near-continuous commentary. Keep each one
   short and punchy so they don't feel repetitive, and vary the phrasing,
   angle, and sentence structure between consecutive facts — don't let two
-  in a row sound like the same template with different words swapped in.`;
+  in a row sound like the same template with different words swapped in.
+- Don't repeat the same underlying piece of trivia twice in different words
+  across the batch — each fact should add new information.
+- Generic lead-ins like "Did you know...", "Fun fact:", "Believe it or
+  not...", "Here's a fact..." are fine once, but overusing them makes the
+  whole batch feel templated — use each at most once, and otherwise just
+  start with the fact itself.`;
 
 function formatMMSS(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -193,6 +199,84 @@ export function repositionFactsByLanguage(facts, durationSeconds) {
   });
 
   return repositioned.sort((a, b) => a.time_seconds - b.time_seconds);
+}
+
+function normalizeForComparison(text) {
+  return (text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 3); // cheap stopword-ish filter
+}
+
+function jaccardSimilarity(wordsA, wordsB) {
+  const setA = new Set(wordsA);
+  const setB = new Set(wordsB);
+  const intersection = [...setA].filter((w) => setB.has(w)).length;
+  const union = new Set([...setA, ...setB]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+const DUPLICATE_SIMILARITY_THRESHOLD = 0.5;
+
+// The model occasionally restates the same underlying trivia twice in a
+// long batch, just phrased differently. Drop later near-duplicates rather
+// than trying to rewrite them — a batch with a few fewer, non-repetitive
+// facts beats one padded with restatements.
+export function removeDuplicateFacts(facts) {
+  const kept = [];
+  const keptWordSets = [];
+  facts.forEach((fact) => {
+    const words = normalizeForComparison(fact.text);
+    const isDuplicate = keptWordSets.some((prev) => jaccardSimilarity(words, prev) >= DUPLICATE_SIMILARITY_THRESHOLD);
+    if (!isDuplicate) {
+      kept.push(fact);
+      keptWordSets.push(words);
+    }
+  });
+  return kept;
+}
+
+// Generic lead-ins read fine once but get repetitive fast across a long
+// batch. Allow each at most once; strip it (and re-capitalize what's left)
+// on later occurrences rather than dropping the fact entirely.
+const GENERIC_OPENERS = [
+  /^did you know[,:]?\s*/i,
+  /^fun fact[,:]?\s*/i,
+  /^believe it or not[,:]?\s*/i,
+  /^here'?s? (?:a|the) (?:fun )?fact[,:]?\s*/i,
+  /^trivia[,:]?\s*/i,
+];
+const MAX_OPENER_USES = 1;
+
+export function diversifyOpeners(facts) {
+  const openerUseCount = new Map();
+  return facts.map((fact) => {
+    const text = fact.text || '';
+    const matchedOpener = GENERIC_OPENERS.find((pattern) => pattern.test(text));
+    if (!matchedOpener) return fact;
+
+    const uses = openerUseCount.get(matchedOpener) || 0;
+    openerUseCount.set(matchedOpener, uses + 1);
+    if (uses < MAX_OPENER_USES) return fact;
+
+    const stripped = text.replace(matchedOpener, '').trim();
+    if (!stripped) return fact; // safety: don't produce an empty fact
+    const recapitalized = stripped.charAt(0).toUpperCase() + stripped.slice(1);
+    return { ...fact, text: recapitalized };
+  });
+}
+
+/**
+ * Runs every deterministic quality pass on raw LLM output, in order:
+ * fix up timestamps against positional language, drop near-duplicate
+ * facts, then trim overused generic lead-ins. Not applied to
+ * buildFallbackFacts's static templates — those are already curated.
+ */
+export function postProcessFacts(facts, durationSeconds) {
+  const repositioned = repositionFactsByLanguage(facts, durationSeconds);
+  const deduped = removeDuplicateFacts(repositioned);
+  return diversifyOpeners(deduped);
 }
 
 export function buildFallbackFacts(durationSeconds) {
