@@ -1,184 +1,120 @@
-# Better Genius matching for covers, multi-candidate scoring, and anti-repetition
+# Suggested Videos section (click to play in-app)
 
 ## Context
 
-Four follow-up improvements from a brainstorm on making facts better/more
-interesting/more precise:
-1. Better Genius matching for cover/live uploads
-2. Checking multiple Genius search candidates instead of just the top hit
-3. An anti-repetition pass (facts restating the same trivia twice in one batch)
-4. Avoiding repeated opening phrases ("Did you know...", "Fun fact...")
+The app currently only loads a video when the user pastes a URL into
+`UrlForm` (or via the Android share-intent flow in `App.jsx`). There's no
+way to discover a next video without leaving the app. The goal: show a
+row of other videos the user can click, which loads and plays instantly
+in-app — exactly like submitting a URL does today.
 
-The first two are really one underlying fix to `server/src/lib/genius.js`'s
-matching logic; the last two are a new deterministic post-processing step
-alongside the existing `repositionFactsByLanguage` in
-`server/src/lib/promptBuilder.js`. No new APIs, no new env vars, no extra
-LLM round-trips — same "prompt guidance + deterministic safety net"
-philosophy already used for fact timing.
+**Important constraint discovered during planning:** YouTube's "related to
+this video" API (`search.list`'s `relatedToVideoId` parameter) was
+deprecated industry-wide around 2020 and no longer returns results for
+API keys — there is no way to get YouTube's actual recommendation
+algorithm output via the public API. The practical alternative — and a
+good thematic fit for a music trivia app — is showing **other videos from
+the same channel/artist** via `search.list` with a `channelId` filter.
+This is fully supported and reliable, just not "true" algorithmic
+suggestions.
 
-## Part 1: Genius matching (covers + multi-candidate)
+**Quota note (confirmed with user, no caching in v1):** `search.list`
+costs 100 quota units per call against a free 10,000 units/day budget —
+roughly ~90-100 video loads/day before hitting the ceiling, once you also
+count the 1-unit `videos.list` lookup needed per load. Accepted for now
+given current traffic; revisit with a caching layer (would need an
+external store like Vercel KV/Redis, since serverless functions can't
+reliably cache in-memory across invocations) only if usage grows enough
+to matter.
 
-**Current gap.** `fetchGeniusContext` only ever looks at the *first*
-`type === 'song'` hit from Genius's search, and rejects it unless the
-YouTube channel name (`cleanAuthor(author)`) matches that hit's
-`primary_artist.name`. That assumption breaks specifically for **cover
-videos**: a cover channel's name (e.g. a random YouTuber) has nothing to do
-with the original artist Genius actually indexes, so a legitimate, useful
-match gets thrown away. "Live" versions don't have this problem — the
-uploading channel is normally still the real artist, and
-`cleanTitle` already strips bracketed content like `"(Live at Wembley)"`
-via its existing strip-everything-in-brackets regex, so no changes are
-needed there.
+This also means the app needs a **new `YOUTUBE_API_KEY`** env var — not
+currently configured anywhere (the earlier idea to feed YouTube
+descriptions into the AI prompt was shelved in favor of Genius, so this
+key was never added). The suggestions feature won't work without it, but
+— matching this app's established graceful-degradation pattern — the app
+functions normally without the key configured; the suggestions section
+just doesn't render.
 
-**Fix — detect covers and adapt both the query and the confidence check:**
+## Approach
 
-In `server/src/lib/genius.js`, add:
-```js
-const COVER_PATTERN = /\bcover(?:\s+version)?\b/i;
-const ORIGINAL_ARTIST_PATTERN = /\boriginally\s+(?:by|performed\s+by)\s+([^()[\]]+)/i;
-```
-- `isCover = COVER_PATTERN.test(title)` — whole-word match, won't false-positive on "recover"/"discover".
-- `statedOriginalArtist`: if the title explicitly says "originally by X" /
-  "originally performed by X", extract and `cleanAuthor(X)` it — a strong,
-  free signal when present.
-- Effective search/match artist: `statedOriginalArtist || (isCover ? null : cleanAuthor(author))`.
-  When it's `null` (an unresolved cover — no stated original artist), build
-  the search query from **title only**, skipping the channel name, since
-  including a random cover channel's name as a search term just adds noise
-  when we know it isn't the real artist.
+### Server: new `/api/suggestions` endpoint (mirrors the `/api/facts` pattern exactly)
 
-**Fix — check multiple candidates, with a title-similarity fallback pass:**
+**New shared helper: `server/src/lib/suggestions.js`**, exporting
+`fetchSuggestedVideos(videoId)` → `Promise<Array<{videoId, title, thumbnailUrl, channelTitle}>>` (always resolves, empty array on any failure, never throws — same contract as `genius.js`'s `fetchGeniusContext`):
+1. Short-circuit to `[]` if `YOUTUBE_API_KEY` isn't set.
+2. `GET videos.list?part=snippet&id=<videoId>&key=...` (1 quota unit) to get
+   `snippet.channelId` for the currently playing video.
+3. `GET search.list?part=snippet&channelId=<channelId>&type=video&order=viewCount&videoDuration=medium&maxResults=10&key=...`
+   (100 quota units) — `order=viewCount` surfaces the channel's most
+   popular uploads (better music-discovery fit than raw recency);
+   `videoDuration=medium` (4-20 min) filters out Shorts and long-form
+   livestreams/full-album uploads that would clutter a "songs by this
+   artist" row.
+4. Filter out the current `videoId` from the results (a channel's own
+   video is very likely to appear in its own search results).
+5. Map each result to `{ videoId: item.id.videoId, title: item.snippet.title, thumbnailUrl: item.snippet.thumbnails.medium.url, channelTitle: item.snippet.channelTitle }` — no extra oEmbed calls needed, `search.list`'s snippet already has everything a card needs.
+6. Wrap the whole thing in try/catch like `genius.js` — any network error,
+   non-2xx, empty channel, etc. resolves to `[]`.
 
-Take up to the top 5 `type === 'song'` hits (already returned by the same
-single `/search` call — no extra request) instead of just the first:
-```js
-const songHits = hits.filter((h) => h.type === 'song').slice(0, 5);
-```
-Add a title-similarity helper alongside the existing `isConfidentMatch`
-(same dependency-free normalize-and-substring approach):
-```js
-function isConfidentTitleMatch(cleanedTitle, hitTitle) {
-  const a = normalize(cleanedTitle);
-  const b = normalize(hitTitle);
-  if (a.length < 3 || b.length < 3) return false;
-  return a.includes(b) || b.includes(a);
-}
-```
-Then, in order:
-1. **Pass 1 (artist-based):** if there's an effective artist to check
-   (`statedOriginalArtist` or a non-cover `cleanAuthor(author)`), scan
-   `songHits` in order and accept the first one where
-   `isConfidentMatch(effectiveArtist, hit.result.primary_artist.name)`
-   passes — same logic as today, just checked across up to 5 hits instead
-   of 1.
-2. **Pass 2 (title-based fallback):** if pass 1 found nothing (including
-   the unresolved-cover case where there's no artist to check at all), scan
-   the *same* `songHits` again and accept the first where
-   `isConfidentTitleMatch(cleanTitle(title), hit.result.title)` passes.
-   This generalizes the cover fix beyond just titles that literally say
-   "(Cover)" — it also helps the common case of a cover video with no
-   qualifier at all, where the artist check was always going to fail.
-3. If neither pass finds anything, return `null` — unchanged
-   graceful-degradation behavior, just harder to end up there needlessly.
+**New route files**, following the exact `facts.js`/`api/facts.js` dual-entrypoint pattern (Express route for local dev, Vercel serverless mirror for production — these don't share routing code, only the underlying lib, so both need the same logic):
+- `server/src/routes/suggestions.js` — `GET /api/suggestions?videoId=...`, validates `videoId` against the same `/^[\w-]{11}$/` pattern used in `validate.js`, calls `fetchSuggestedVideos`, responds `{ suggestions }`.
+- `api/suggestions.js` — identical logic, Vercel handler signature, importing from `../server/src/lib/suggestions.js`.
+- `server/src/index.js` — mount: `app.use('/api/suggestions', suggestionsRouter)`.
 
-This replaces the current single `hits.find(...)` + one confidence check
-with the above two-pass, multi-candidate logic. Everything else in
-`fetchGeniusContext` (fetching `/songs/:id`, `formatGeniusContext`, all
-error handling) is unchanged.
+**`.env.example`** — add `YOUTUBE_API_KEY` (optional/graceful-degradation framing, same style as `GENIUS_ACCESS_TOKEN`'s entry), noting it's required specifically for the Suggested Videos feature to actually produce results.
 
-## Part 2: Anti-repetition + opening-phrase variety
+### Client: reuse the existing video-load pipeline, no new "load video" logic needed
 
-New deterministic post-processing in `server/src/lib/promptBuilder.js`,
-applied only to real LLM output (not `buildFallbackFacts`'s static
-templates, which are already curated and don't need it). Wrap it in one
-exported function so `facts.js` only has to change its two call sites from
-`repositionFactsByLanguage(facts, durationSeconds)` to
-`postProcessFacts(facts, durationSeconds)`:
+This is the key simplification: `App.jsx`'s existing `handleSubmit(videoId)`
+(lines 46-58) already takes a bare video ID and runs the full pipeline
+(fetch oEmbed → set state → `'loading-player'` → player mounts → `'fetching-facts'` → `postFacts` → `'ready'`). It's already called two ways today: from `UrlForm`'s `onSubmit` prop, and directly from the share-intent `useEffect` on mount. A suggestion click is a third caller of the exact same function — **no refactor required**.
 
-```js
-export function postProcessFacts(facts, durationSeconds) {
-  const repositioned = repositionFactsByLanguage(facts, durationSeconds);
-  const deduped = removeDuplicateFacts(repositioned);
-  return diversifyOpeners(deduped);
-}
-```
+1. **`client/src/lib/api.js`** — add `fetchSuggestions(videoId)`, a `GET /api/suggestions?videoId=...` call returning `{ suggestions: [] }` on any non-OK response (never throws — the client should treat a failed suggestions fetch the same as "no suggestions available," not an app-level error).
 
-**Duplicate removal** — a simple, dependency-free word-overlap check
-(same "no fuzzy-matching library" constraint used in `genius.js`):
-```js
-function normalizeForComparison(text) {
-  return (text || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, '')
-    .split(/\s+/)
-    .filter((w) => w.length > 3); // cheap stopword-ish filter
-}
+2. **New component `client/src/components/SuggestedVideos.jsx`** — takes `{ videos, onSelect }`, renders nothing if `videos.length === 0`, otherwise a horizontally-scrollable row of cards (thumbnail + title + channel name), each calling `onSelect(video.videoId)` on click. Small, single-purpose component matching the existing style of `Balloon.jsx`/`PopupLayer.jsx`.
 
-function jaccardSimilarity(wordsA, wordsB) {
-  const setA = new Set(wordsA);
-  const setB = new Set(wordsB);
-  const intersection = [...setA].filter((w) => setB.has(w)).length;
-  const union = new Set([...setA, ...setB]).size;
-  return union === 0 ? 0 : intersection / union;
-}
-```
-`removeDuplicateFacts(facts)` walks the list, keeping a fact only if its
-word-set similarity to every already-kept fact is below a threshold
-(~0.5). Dropped facts just mean a batch occasionally ends up with fewer
-than `factCount` facts — an accepted trade-off, same spirit as dropping a
-low-confidence Genius match rather than guessing wrong.
+3. **`client/src/App.jsx`**:
+   - New state: `const [suggestions, setSuggestions] = useState([]);`
+   - New `useEffect` gated on `status === 'ready'`, depending on `[videoId, status]`, following the exact same guard/`cancelled`-flag pattern as the existing `postFacts` effect (lines 93-119) — calls `fetchSuggestions(videoId)`, sets `suggestions` on success, leaves it `[]` on failure (no error state change — this is a non-critical enhancement, never surfaces as an app error).
+   - Clear `suggestions` back to `[]` at the top of `handleSubmit` (so stale suggestions from the previous video don't flash while the next one loads) and in `reset()`.
+   - Render `<SuggestedVideos videos={suggestions} onSelect={handleSubmit} />` as a new **top-level child of `.app`**, placed after the `.video-stage` block, gated on `status === 'ready'`. Passing `handleSubmit` directly as `onSelect` is what makes clicking a suggestion behave identically to submitting a URL.
+   - Add `import './styles/suggestions.css';` alongside the existing `app.css`/`balloon.css` imports (`App.jsx:8-9`).
 
-**Opening-phrase variety** — deterministic correction, no second LLM call:
-```js
-const GENERIC_OPENERS = [
-  /^did you know[,:]?\s*/i,
-  /^fun fact[,:]?\s*/i,
-  /^believe it or not[,:]?\s*/i,
-  /^here'?s? (?:a|the) (?:fun )?fact[,:]?\s*/i,
-  /^trivia[,:]?\s*/i,
-];
-const MAX_OPENER_USES = 1;
-```
-`diversifyOpeners(facts)` tracks how many times each opener pattern has
-already been used; the first use of a given opener passes through
-unchanged, but subsequent uses get that boilerplate lead-in phrase
-stripped and the remaining sentence re-capitalized (e.g. a fact starting
-"Fun fact: the producer also..." becomes "The producer also..." on its
-second occurrence) — trims the repetitive framing without needing to
-regenerate content.
+4. **New `client/src/styles/suggestions.css`** — horizontal-scroll row styling (flex row, `overflow-x: auto`, card min-width, thumbnail `aspect-ratio: 16/9`, consistent with the existing dark theme via `--color-surface`/`--color-border`/`--color-text-muted` custom properties already defined in `index.css`).
 
-**Also strengthen `SYSTEM_PROMPT`** with an explicit instruction naming
-these same opener phrases and capping their use, right after the existing
-"vary the phrasing..." bullet — so the deterministic pass has less work to
-do in practice, same "prompt guidance + safety net" pairing used
-elsewhere.
+**No changes needed to the landscape-fullscreen "cinema mode" CSS**
+(`app.css`'s `@media (orientation: landscape) and (pointer: coarse)` block) — confirmed its hiding rule is `.app:has(.video-stage) > *:not(.video-stage) { display: none; }`, a structural selector that automatically catches any new top-level `.app` child, including the new suggestions section, with zero extra work.
 
 ## Files touched
 
-- `server/src/lib/genius.js` — cover detection, multi-candidate + two-pass
-  matching (only `fetchGeniusContext` and its helpers change)
-- `server/src/lib/promptBuilder.js` — new `postProcessFacts`,
-  `removeDuplicateFacts`, `diversifyOpeners`; small `SYSTEM_PROMPT` addition
-- `server/src/lib/facts.js` — swap `repositionFactsByLanguage(...)` for
-  `postProcessFacts(...)` at both call sites (Gemini success, OpenAI success)
+- `server/src/lib/suggestions.js` (new)
+- `server/src/routes/suggestions.js` (new)
+- `api/suggestions.js` (new)
+- `server/src/index.js` (mount the new route)
+- `.env.example` (`YOUTUBE_API_KEY`)
+- `client/src/lib/api.js` (`fetchSuggestions`)
+- `client/src/components/SuggestedVideos.jsx` (new)
+- `client/src/styles/suggestions.css` (new)
+- `client/src/App.jsx` (state, effect, render, cleanup)
 
 ## Verification
 
-1. **Genius matching** — exercise `fetchGeniusContext` directly (same
-   manual-node-script approach used for the original Genius integration)
-   against: a normal official upload (unchanged behavior — still matches
-   via pass 1), a title containing "(Cover)" with an unrelated channel name
-   (should now match via the title-only query + pass 2, where it
-   previously returned `null`), a title with an explicit "originally by X"
-   credit (should match using the extracted artist), and a garbled/no-match
-   case (should still cleanly return `null`).
-2. **Post-processing** — feed `postProcessFacts` a hand-built facts array
-   containing two near-duplicate facts (same underlying trivia, different
-   wording) and confirm one is dropped; feed it a batch where 3+ facts
-   start with "Did you know" and confirm only the first is left as-is while
-   the rest have the opener stripped and are still readable, correctly
-   capitalized sentences.
-3. **End-to-end** — run `generateFacts` against a couple of real videos
-   locally (a normal upload and, if available, a well-known cover video)
-   and confirm the output reads more varied and, for the cover case, that
-   Genius context now shows up where it didn't before.
+1. **Server, real key**: set `YOUTUBE_API_KEY` in `server/.env`, call
+   `fetchSuggestedVideos(videoId)` directly for a well-known music video
+   (e.g. Rick Astley's), confirm it returns other videos from that same
+   channel with sensible titles/thumbnails, and confirm the current video
+   itself is excluded from the results.
+2. **Server, no key**: unset `YOUTUBE_API_KEY`, confirm `fetchSuggestedVideos`
+   resolves to `[]` with no network call and no thrown error — matches
+   the `genius.js` graceful-degradation pattern.
+3. **Route parity**: diff `server/src/routes/suggestions.js` and
+   `api/suggestions.js` after implementation to confirm the logic is
+   identical aside from the relative import path (same check done for
+   `facts.js`/`api/facts.js`).
+4. **End-to-end in the browser**: `npm run dev`, load a video, confirm a
+   row of suggested videos appears once the video reaches `'ready'` status,
+   click one, and confirm it loads and plays exactly as if the URL had
+   been pasted (trivia facts fetch again for the new video, `PopupLayer`
+   still works, etc.).
+5. **Cinema mode regression check**: rotate to landscape on a touch device/emulated device, confirm the suggestions row disappears along with the rest of the UI (already covered by the existing structural CSS selector, but worth a visual confirmation).
+6. **Mobile/dev-tools check for the API key requirement**: confirm the app behaves identically to today (no errors, no visual gap) when `YOUTUBE_API_KEY` is unset — the suggestions section should simply not appear.

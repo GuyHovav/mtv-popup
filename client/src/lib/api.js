@@ -14,3 +14,13 @@ export async function postFacts({ videoId, title, author, durationSeconds }) {
 
   return res.json(); // { videoId, facts }
 }
+
+export async function fetchSuggestions(videoId) {
+  try {
+    const res = await fetch(`/api/suggestions?videoId=${encodeURIComponent(videoId)}`);
+    if (!res.ok) return { suggestions: [] };
+    return res.json(); // { suggestions }
+  } catch {
+    return { suggestions: [] };
+  }
+}

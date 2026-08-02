@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import UrlForm from './components/UrlForm.jsx';
 import YouTubePlayer from './components/YouTubePlayer.jsx';
 import PopupLayer from './components/PopupLayer.jsx';
+import SuggestedVideos from './components/SuggestedVideos.jsx';
 import { fetchOEmbed, parseVideoId } from './lib/youtube.js';
-import { postFacts } from './lib/api.js';
+import { postFacts, fetchSuggestions } from './lib/api.js';
 import { useFactSync } from './hooks/useFactSync.js';
 import './styles/app.css';
 import './styles/balloon.css';
+import './styles/suggestions.css';
 
 const STATUS_MESSAGES = {
   'fetching-meta': 'Looking up the video…',
@@ -23,6 +25,7 @@ export default function App() {
   const [duration, setDuration] = useState(null);
   const [facts, setFacts] = useState([]);
   const [degraded, setDegraded] = useState(false);
+  const [suggestions, setSuggestions] = useState([]);
 
   // `facts` is passed directly (not a fresh `[]` literal per render) so its
   // reference only changes when setFacts() actually runs — otherwise the
@@ -41,10 +44,12 @@ export default function App() {
     setDuration(null);
     setFacts([]);
     setDegraded(false);
+    setSuggestions([]);
   }
 
   async function handleSubmit(newVideoId) {
     setErrorMessage(null);
+    setSuggestions([]);
     setStatus('fetching-meta');
     try {
       const oembed = await fetchOEmbed(newVideoId);
@@ -118,6 +123,20 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status]);
 
+  useEffect(() => {
+    if (status !== 'ready') return;
+    let cancelled = false;
+
+    fetchSuggestions(videoId).then((data) => {
+      if (cancelled) return;
+      setSuggestions(data.suggestions || []);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [status, videoId]);
+
   const isBusy = status === 'fetching-meta' || status === 'loading-player' || status === 'fetching-facts';
 
   return (
@@ -156,6 +175,8 @@ export default function App() {
           {status === 'ready' && <PopupLayer balloon={activeBalloon} onDismiss={dismissBalloon} />}
         </div>
       )}
+
+      {status === 'ready' && <SuggestedVideos videos={suggestions} onSelect={handleSubmit} />}
     </div>
   );
 }
