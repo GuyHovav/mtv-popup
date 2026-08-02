@@ -1,120 +1,166 @@
-# Suggested Videos section (click to play in-app)
+# YouTube search (URL field does double duty)
 
 ## Context
 
-The app currently only loads a video when the user pastes a URL into
-`UrlForm` (or via the Android share-intent flow in `App.jsx`). There's no
-way to discover a next video without leaving the app. The goal: show a
-row of other videos the user can click, which loads and plays instantly
-in-app — exactly like submitting a URL does today.
+Right now the only way to load a video is pasting a URL/ID — `UrlForm`
+calls `parseVideoId(value)` and shows an error if it doesn't look like a
+valid YouTube URL/ID. The ask: let that same field also work as a search
+box — if the input isn't a URL, treat it as a search query and show
+matching videos to pick from (confirmed: a results list, not
+auto-playing the top hit).
 
-**Important constraint discovered during planning:** YouTube's "related to
-this video" API (`search.list`'s `relatedToVideoId` parameter) was
-deprecated industry-wide around 2020 and no longer returns results for
-API keys — there is no way to get YouTube's actual recommendation
-algorithm output via the public API. The practical alternative — and a
-good thematic fit for a music trivia app — is showing **other videos from
-the same channel/artist** via `search.list` with a `channelId` filter.
-This is fully supported and reliable, just not "true" algorithmic
-suggestions.
+This reuses almost everything already built for the Suggested Videos
+feature: the same YouTube Data API v3 key, the same `search.list`
+endpoint (just `q=` instead of `channelId=`), the same server dual-
+entrypoint pattern, and the same video-card UI/click-to-load behavior
+(`onSelect` → `handleSubmit`, no new "load video" logic needed here
+either).
 
-**Quota note (confirmed with user, no caching in v1):** `search.list`
-costs 100 quota units per call against a free 10,000 units/day budget —
-roughly ~90-100 video loads/day before hitting the ceiling, once you also
-count the 1-unit `videos.list` lookup needed per load. Accepted for now
-given current traffic; revisit with a caching layer (would need an
-external store like Vercel KV/Redis, since serverless functions can't
-reliably cache in-memory across invocations) only if usage grows enough
-to matter.
-
-This also means the app needs a **new `YOUTUBE_API_KEY`** env var — not
-currently configured anywhere (the earlier idea to feed YouTube
-descriptions into the AI prompt was shelved in favor of Genius, so this
-key was never added). The suggestions feature won't work without it, but
-— matching this app's established graceful-degradation pattern — the app
-functions normally without the key configured; the suggestions section
-just doesn't render.
+**Quota note:** `search.list` costs 100 units/call, same as suggestions —
+already a known constraint (~90-100 loads/day on the free tier, no
+caching in v1 per the earlier decision). Search adds more variable
+load on top of that (a user might refine a query a few times), so this
+plan deliberately makes search **explicit-submit only** (press
+button/Enter), never live-as-you-type — firing a 100-unit call per
+keystroke would burn through the daily quota almost immediately.
 
 ## Approach
 
-### Server: new `/api/suggestions` endpoint (mirrors the `/api/facts` pattern exactly)
+### Server: extract a shared YouTube client, add `searchVideos`
 
-**New shared helper: `server/src/lib/suggestions.js`**, exporting
-`fetchSuggestedVideos(videoId)` → `Promise<Array<{videoId, title, thumbnailUrl, channelTitle}>>` (always resolves, empty array on any failure, never throws — same contract as `genius.js`'s `fetchGeniusContext`):
-1. Short-circuit to `[]` if `YOUTUBE_API_KEY` isn't set.
-2. `GET videos.list?part=snippet&id=<videoId>&key=...` (1 quota unit) to get
-   `snippet.channelId` for the currently playing video.
-3. `GET search.list?part=snippet&channelId=<channelId>&type=video&order=viewCount&videoDuration=medium&maxResults=10&key=...`
-   (100 quota units) — `order=viewCount` surfaces the channel's most
-   popular uploads (better music-discovery fit than raw recency);
-   `videoDuration=medium` (4-20 min) filters out Shorts and long-form
-   livestreams/full-album uploads that would clutter a "songs by this
-   artist" row.
-4. Filter out the current `videoId` from the results (a channel's own
-   video is very likely to appear in its own search results).
-5. Map each result to `{ videoId: item.id.videoId, title: item.snippet.title, thumbnailUrl: item.snippet.thumbnails.medium.url, channelTitle: item.snippet.channelTitle }` — no extra oEmbed calls needed, `search.list`'s snippet already has everything a card needs.
-6. Wrap the whole thing in try/catch like `genius.js` — any network error,
-   non-2xx, empty channel, etc. resolves to `[]`.
+`server/src/lib/suggestions.js` already has a private `youtubeFetch`
+helper and inline result-mapping logic that a text-search function would
+need to duplicate. Extract the shared bits into a new
+**`server/src/lib/youtubeClient.js`**:
+- `youtubeFetch(path)` — moved as-is from `suggestions.js` (API key
+  injection, `AbortController` timeout, non-2xx/error handling → `null`).
+- `hasYouTubeApiKey()` — small helper wrapping the `process.env.YOUTUBE_API_KEY` check, used by both files' short-circuit.
+- `mapSearchItems(items, excludeVideoId)` — the `item → {videoId, title, thumbnailUrl, channelTitle}` mapping + filtering, extracted from `fetchSuggestedVideos`'s inline logic (identical shape, since both are `search.list` responses).
 
-**New route files**, following the exact `facts.js`/`api/facts.js` dual-entrypoint pattern (Express route for local dev, Vercel serverless mirror for production — these don't share routing code, only the underlying lib, so both need the same logic):
-- `server/src/routes/suggestions.js` — `GET /api/suggestions?videoId=...`, validates `videoId` against the same `/^[\w-]{11}$/` pattern used in `validate.js`, calls `fetchSuggestedVideos`, responds `{ suggestions }`.
-- `api/suggestions.js` — identical logic, Vercel handler signature, importing from `../server/src/lib/suggestions.js`.
-- `server/src/index.js` — mount: `app.use('/api/suggestions', suggestionsRouter)`.
+Update `suggestions.js` to import these instead of defining them locally
+— behavior must stay byte-for-byte identical (re-verify against the real
+API key after refactoring, same test used when this file was first
+built).
 
-**`.env.example`** — add `YOUTUBE_API_KEY` (optional/graceful-degradation framing, same style as `GENIUS_ACCESS_TOKEN`'s entry), noting it's required specifically for the Suggested Videos feature to actually produce results.
+**New `server/src/lib/search.js`**:
+```js
+export async function searchVideos(query) {
+  if (!hasYouTubeApiKey()) return [];
+  const trimmed = (query || '').trim().slice(0, MAX_QUERY_LEN); // 200 chars, same cap style as genius.js
+  if (!trimmed) return [];
+  try {
+    const searchData = await youtubeFetch(`/search?part=snippet&q=${encodeURIComponent(trimmed)}&type=video&maxResults=10`);
+    const items = searchData?.items;
+    if (!Array.isArray(items)) return [];
+    return mapSearchItems(items);
+  } catch (err) {
+    console.warn('Unexpected error searching videos:', err?.message || err);
+    return [];
+  }
+}
+```
+No `videoDuration`/`order` filter here (unlike suggestions' channel
+lookup) — a general search shouldn't silently exclude Shorts or sort
+away relevance, since query intent is broader than "songs by one artist."
 
-### Client: reuse the existing video-load pipeline, no new "load video" logic needed
+**New route files**, same dual-entrypoint pattern as `facts.js`/`suggestions.js`:
+- `server/src/routes/search.js` — `GET /api/search?q=...`, 400 on
+  missing/empty `q`, calls `searchVideos`, responds `{ results }`.
+- `api/search.js` — identical logic, Vercel handler signature.
+- `server/src/index.js` — mount `app.use('/api/search', searchRouter)`.
 
-This is the key simplification: `App.jsx`'s existing `handleSubmit(videoId)`
-(lines 46-58) already takes a bare video ID and runs the full pipeline
-(fetch oEmbed → set state → `'loading-player'` → player mounts → `'fetching-facts'` → `postFacts` → `'ready'`). It's already called two ways today: from `UrlForm`'s `onSubmit` prop, and directly from the share-intent `useEffect` on mount. A suggestion click is a third caller of the exact same function — **no refactor required**.
+No new env var — reuses the existing `YOUTUBE_API_KEY`.
 
-1. **`client/src/lib/api.js`** — add `fetchSuggestions(videoId)`, a `GET /api/suggestions?videoId=...` call returning `{ suggestions: [] }` on any non-OK response (never throws — the client should treat a failed suggestions fetch the same as "no suggestions available," not an app-level error).
+### Client: `UrlForm` detects mode, App.jsx reuses the suggestions UI pattern
 
-2. **New component `client/src/components/SuggestedVideos.jsx`** — takes `{ videos, onSelect }`, renders nothing if `videos.length === 0`, otherwise a horizontally-scrollable row of cards (thumbnail + title + channel name), each calling `onSelect(video.videoId)` on click. Small, single-purpose component matching the existing style of `Balloon.jsx`/`PopupLayer.jsx`.
+**`client/src/components/UrlForm.jsx`** — branch on whether the input
+parses as a video ID:
+```js
+function handleSubmit(e) {
+  e.preventDefault();
+  const trimmed = value.trim();
+  if (!trimmed) {
+    setError('Type a YouTube link or search for a video.');
+    return;
+  }
+  const videoId = parseVideoId(trimmed);
+  setError(null);
+  if (videoId) {
+    onSubmit(videoId);
+  } else {
+    onSearch(trimmed);
+  }
+}
+```
+New prop: `onSearch`. Also add a live (local, no network cost — just
+regex) mode hint so the button reflects which action will happen:
+```js
+const looksLikeUrl = Boolean(parseVideoId(value));
+// button label: disabled ? 'Loading…' : looksLikeUrl ? 'Pop it off' : 'Search'
+```
 
-3. **`client/src/App.jsx`**:
-   - New state: `const [suggestions, setSuggestions] = useState([]);`
-   - New `useEffect` gated on `status === 'ready'`, depending on `[videoId, status]`, following the exact same guard/`cancelled`-flag pattern as the existing `postFacts` effect (lines 93-119) — calls `fetchSuggestions(videoId)`, sets `suggestions` on success, leaves it `[]` on failure (no error state change — this is a non-critical enhancement, never surfaces as an app error).
-   - Clear `suggestions` back to `[]` at the top of `handleSubmit` (so stale suggestions from the previous video don't flash while the next one loads) and in `reset()`.
-   - Render `<SuggestedVideos videos={suggestions} onSelect={handleSubmit} />` as a new **top-level child of `.app`**, placed after the `.video-stage` block, gated on `status === 'ready'`. Passing `handleSubmit` directly as `onSelect` is what makes clicking a suggestion behave identically to submitting a URL.
-   - Add `import './styles/suggestions.css';` alongside the existing `app.css`/`balloon.css` imports (`App.jsx:8-9`).
+**`client/src/lib/api.js`** — add `searchVideos(query)`, a
+`GET /api/search?q=...` call following the exact same never-throw
+contract as `fetchSuggestions` (`{ results: [] }` on any failure).
 
-4. **New `client/src/styles/suggestions.css`** — horizontal-scroll row styling (flex row, `overflow-x: auto`, card min-width, thumbnail `aspect-ratio: 16/9`, consistent with the existing dark theme via `--color-surface`/`--color-border`/`--color-text-muted` custom properties already defined in `index.css`).
+**`client/src/components/SuggestedVideos.jsx`** — add an optional
+`title` prop (default `'More like this'`), so the same component renders
+both the existing channel-based suggestions row and search results with
+a contextual heading (`Results for "query"`) — no new component needed,
+this one's already exactly the right shape (thumbnail cards,
+`onSelect(videoId)`).
 
-**No changes needed to the landscape-fullscreen "cinema mode" CSS**
-(`app.css`'s `@media (orientation: landscape) and (pointer: coarse)` block) — confirmed its hiding rule is `.app:has(.video-stage) > *:not(.video-stage) { display: none; }`, a structural selector that automatically catches any new top-level `.app` child, including the new suggestions section, with zero extra work.
+**`client/src/App.jsx`**:
+- New state: `searchResults` (`null` = no active search, array once a
+  search resolves), `isSearching` (bool), `searchQuery` (string, for the
+  results heading / "no results" message).
+- `handleSearch(query)`: sets `searchQuery`, `isSearching(true)`, clears
+  `searchResults`, calls `searchVideos(query)`, sets `searchResults` on
+  resolve, `isSearching(false)`. Kept **decoupled from the main `status`
+  state machine** — searching is an independent side-flow that ends with
+  the user picking a video, which then goes through the existing
+  `handleSubmit` pipeline unchanged.
+- Clear `searchResults`/`searchQuery` back to `null`/`''` at the top of
+  `handleSubmit` (so the results picker disappears once a video is
+  actually chosen/loaded) and in `reset()`.
+- Extend `isBusy` to include `isSearching`, so the form disables consistently during any async op (video load or search) — but `isSearching` never touches `status` itself.
+- Render, as a new top-level child of `.app` right after `<UrlForm>`:
+  ```jsx
+  {isSearching && <p className="app__status">Searching…</p>}
+  {searchResults && searchResults.length > 0 && (
+    <SuggestedVideos title={`Results for "${searchQuery}"`} videos={searchResults} onSelect={handleSubmit} />
+  )}
+  {searchResults && searchResults.length === 0 && (
+    <p className="app__status">No videos found for "{searchQuery}".</p>
+  )}
+  ```
+  Passing `handleSubmit` directly as `onSelect` is what makes clicking a
+  search result behave identically to pasting its URL — same reuse
+  pattern as Suggested Videos.
+
+**No CSS changes needed** — reusing `SuggestedVideos`/`suggestions.css`
+as-is, and the landscape "cinema mode" selector
+(`.app:has(.video-stage) > *:not(.video-stage)`) already auto-hides any
+new top-level `.app` child, same as confirmed for the suggestions feature.
 
 ## Files touched
 
-- `server/src/lib/suggestions.js` (new)
-- `server/src/routes/suggestions.js` (new)
-- `api/suggestions.js` (new)
-- `server/src/index.js` (mount the new route)
-- `.env.example` (`YOUTUBE_API_KEY`)
-- `client/src/lib/api.js` (`fetchSuggestions`)
-- `client/src/components/SuggestedVideos.jsx` (new)
-- `client/src/styles/suggestions.css` (new)
-- `client/src/App.jsx` (state, effect, render, cleanup)
+- `server/src/lib/youtubeClient.js` (new — extracted shared helper)
+- `server/src/lib/suggestions.js` (refactored to use the shared helper, behavior unchanged)
+- `server/src/lib/search.js` (new)
+- `server/src/routes/search.js` (new)
+- `api/search.js` (new)
+- `server/src/index.js` (mount route)
+- `client/src/lib/api.js` (`searchVideos`)
+- `client/src/components/UrlForm.jsx` (branch to search, dynamic button label, `onSearch` prop)
+- `client/src/components/SuggestedVideos.jsx` (add `title` prop)
+- `client/src/App.jsx` (search state, `handleSearch`, render, cleanup)
 
 ## Verification
 
-1. **Server, real key**: set `YOUTUBE_API_KEY` in `server/.env`, call
-   `fetchSuggestedVideos(videoId)` directly for a well-known music video
-   (e.g. Rick Astley's), confirm it returns other videos from that same
-   channel with sensible titles/thumbnails, and confirm the current video
-   itself is excluded from the results.
-2. **Server, no key**: unset `YOUTUBE_API_KEY`, confirm `fetchSuggestedVideos`
-   resolves to `[]` with no network call and no thrown error — matches
-   the `genius.js` graceful-degradation pattern.
-3. **Route parity**: diff `server/src/routes/suggestions.js` and
-   `api/suggestions.js` after implementation to confirm the logic is
-   identical aside from the relative import path (same check done for
-   `facts.js`/`api/facts.js`).
-4. **End-to-end in the browser**: `npm run dev`, load a video, confirm a
-   row of suggested videos appears once the video reaches `'ready'` status,
-   click one, and confirm it loads and plays exactly as if the URL had
-   been pasted (trivia facts fetch again for the new video, `PopupLayer`
-   still works, etc.).
-5. **Cinema mode regression check**: rotate to landscape on a touch device/emulated device, confirm the suggestions row disappears along with the rest of the UI (already covered by the existing structural CSS selector, but worth a visual confirmation).
-6. **Mobile/dev-tools check for the API key requirement**: confirm the app behaves identically to today (no errors, no visual gap) when `YOUTUBE_API_KEY` is unset — the suggestions section should simply not appear.
+1. **Regression check on the refactor**: after extracting `youtubeClient.js`, re-run the exact real-key test already used for suggestions (`fetchSuggestedVideos('dQw4w9WgXcQ')`) and confirm identical output to before the refactor.
+2. **Server, real key**: call `searchVideos('rick astley never gonna give you up')` directly, confirm sensible results including the actual video.
+3. **Server, no key / empty query**: confirm `searchVideos` resolves to `[]` for a missing key and for an empty/whitespace-only query, with no network call in the missing-key case.
+4. **Route parity**: diff `server/src/routes/search.js` vs `api/search.js` for logical equivalence, same check used for the other endpoint pairs.
+5. **Browser end-to-end**: type a non-URL query into the field, confirm the button reads "Search," confirm results render with the right heading, click one, confirm it loads and plays exactly like a pasted URL (and that the results picker disappears once it does). Also confirm pasting an actual URL still works unchanged, and that an empty submit still shows a validation error instead of searching for `''`.
+6. **Cinema-mode regression check**: confirm the search results row is hidden in landscape/cinema mode along with the rest of the UI (same structural CSS selector, no new rule needed).

@@ -4,7 +4,7 @@ import YouTubePlayer from './components/YouTubePlayer.jsx';
 import PopupLayer from './components/PopupLayer.jsx';
 import SuggestedVideos from './components/SuggestedVideos.jsx';
 import { fetchOEmbed, parseVideoId } from './lib/youtube.js';
-import { postFacts, fetchSuggestions } from './lib/api.js';
+import { postFacts, fetchSuggestions, searchVideos } from './lib/api.js';
 import { useFactSync } from './hooks/useFactSync.js';
 import './styles/app.css';
 import './styles/balloon.css';
@@ -26,6 +26,9 @@ export default function App() {
   const [facts, setFacts] = useState([]);
   const [degraded, setDegraded] = useState(false);
   const [suggestions, setSuggestions] = useState([]);
+  const [searchResults, setSearchResults] = useState(null);
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // `facts` is passed directly (not a fresh `[]` literal per render) so its
   // reference only changes when setFacts() actually runs — otherwise the
@@ -45,11 +48,15 @@ export default function App() {
     setFacts([]);
     setDegraded(false);
     setSuggestions([]);
+    setSearchResults(null);
+    setSearchQuery('');
   }
 
   async function handleSubmit(newVideoId) {
     setErrorMessage(null);
     setSuggestions([]);
+    setSearchResults(null);
+    setSearchQuery('');
     setStatus('fetching-meta');
     try {
       const oembed = await fetchOEmbed(newVideoId);
@@ -71,6 +78,18 @@ export default function App() {
   function handlePlayerFatalError(message) {
     setStatus('error');
     setErrorMessage(message);
+  }
+
+  // Kept independent of `status` — searching is a side-flow that ends
+  // with the user picking a video, which then goes through the normal
+  // handleSubmit pipeline unchanged.
+  async function handleSearch(query) {
+    setSearchQuery(query);
+    setSearchResults(null);
+    setIsSearching(true);
+    const data = await searchVideos(query);
+    setIsSearching(false);
+    setSearchResults(data.results || []);
   }
 
   // Populated by the Android share-intent handler in MainActivity.java,
@@ -137,7 +156,8 @@ export default function App() {
     };
   }, [status, videoId]);
 
-  const isBusy = status === 'fetching-meta' || status === 'loading-player' || status === 'fetching-facts';
+  const isBusy =
+    status === 'fetching-meta' || status === 'loading-player' || status === 'fetching-facts' || isSearching;
 
   return (
     <div className="app">
@@ -146,7 +166,21 @@ export default function App() {
         <p className="app__subtitle">Paste any YouTube video and watch the trivia balloons pop.</p>
       </header>
 
-      <UrlForm onSubmit={handleSubmit} disabled={isBusy} />
+      <UrlForm onSubmit={handleSubmit} onSearch={handleSearch} disabled={isBusy} />
+
+      {isSearching && <p className="app__status">Searching…</p>}
+
+      {searchResults && searchResults.length > 0 && (
+        <SuggestedVideos
+          title={`Results for "${searchQuery}"`}
+          videos={searchResults}
+          onSelect={handleSubmit}
+        />
+      )}
+
+      {searchResults && searchResults.length === 0 && !isSearching && (
+        <p className="app__status">No videos found for "{searchQuery}".</p>
+      )}
 
       {isBusy && <p className="app__status">{STATUS_MESSAGES[status]}</p>}
 

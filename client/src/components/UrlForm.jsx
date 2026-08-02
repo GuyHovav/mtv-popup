@@ -1,32 +1,39 @@
 import { useState } from 'react';
 import { parseVideoId } from '../lib/youtube.js';
 
-export default function UrlForm({ onSubmit, disabled }) {
+export default function UrlForm({ onSubmit, onSearch, disabled }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState(null);
 
+  const looksLikeUrl = Boolean(parseVideoId(value));
+
   function handleSubmit(e) {
     e.preventDefault();
-    const videoId = parseVideoId(value);
-    if (!videoId) {
-      setError("That doesn't look like a valid YouTube URL or video ID.");
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setError('Type a YouTube link or search for a video.');
       return;
     }
+    const videoId = parseVideoId(trimmed);
     setError(null);
-    onSubmit(videoId);
+    if (videoId) {
+      onSubmit(videoId);
+    } else {
+      onSearch(trimmed);
+    }
   }
 
   return (
     <form className="url-form" onSubmit={handleSubmit}>
       <label htmlFor="youtube-url" className="url-form__label">
-        Paste a YouTube link
+        Paste a YouTube link, or search for a video
       </label>
       <div className="url-form__row">
         <input
           id="youtube-url"
           type="text"
           className="url-form__input"
-          placeholder="https://www.youtube.com/watch?v=..."
+          placeholder="https://www.youtube.com/watch?v=... or search for a song"
           value={value}
           onChange={(e) => setValue(e.target.value)}
           disabled={disabled}
@@ -34,7 +41,7 @@ export default function UrlForm({ onSubmit, disabled }) {
           aria-describedby={error ? 'youtube-url-error' : undefined}
         />
         <button type="submit" className="url-form__button" disabled={disabled}>
-          {disabled ? 'Loading…' : 'Pop it off'}
+          {disabled ? 'Loading…' : looksLikeUrl ? 'Pop it off' : 'Search'}
         </button>
       </div>
       {error && (

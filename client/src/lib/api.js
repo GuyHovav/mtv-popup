@@ -24,3 +24,13 @@ export async function fetchSuggestions(videoId) {
     return { suggestions: [] };
   }
 }
+
+export async function searchVideos(query) {
+  try {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return { results: [] };
+    return res.json(); // { results }
+  } catch {
+    return { results: [] };
+  }
+}

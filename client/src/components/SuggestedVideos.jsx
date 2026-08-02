@@ -1,9 +1,9 @@
-export default function SuggestedVideos({ videos, onSelect }) {
+export default function SuggestedVideos({ videos, onSelect, title = 'More like this' }) {
   if (!videos || videos.length === 0) return null;
 
   return (
-    <div className="suggested-videos" aria-label="Suggested videos">
-      <h2 className="suggested-videos__title">More like this</h2>
+    <div className="suggested-videos" aria-label={title}>
+      <h2 className="suggested-videos__title">{title}</h2>
       <div className="suggested-videos__row">
         {videos.map((video) => (
           <button

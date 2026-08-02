@@ -9,29 +9,9 @@
 // doesn't render — so every path here fails soft to `[]`, same contract as
 // genius.js's fetchGeniusContext.
 
-const YOUTUBE_API_BASE = 'https://www.googleapis.com/youtube/v3';
-const FETCH_TIMEOUT_MS = 5000;
-const MAX_RESULTS = 10;
+import { youtubeFetch, hasYouTubeApiKey, mapSearchItems } from './youtubeClient.js';
 
-async function youtubeFetch(path) {
-  const apiKey = process.env.YOUTUBE_API_KEY;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const url = `${YOUTUBE_API_BASE}${path}${path.includes('?') ? '&' : '?'}key=${apiKey}`;
-    const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) {
-      console.warn(`YouTube Data API ${path} returned ${res.status}`);
-      return null;
-    }
-    return await res.json();
-  } catch (err) {
-    console.warn(`YouTube Data API request failed (${path}):`, err?.message || err);
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+const MAX_RESULTS = 10;
 
 /**
  * Looks up other videos from the same channel as `videoId` — a proxy for
@@ -39,7 +19,7 @@ async function youtubeFetch(path) {
  * Always resolves; returns [] on any missing key/network/quota failure.
  */
 export async function fetchSuggestedVideos(videoId) {
-  if (!process.env.YOUTUBE_API_KEY) {
+  if (!hasYouTubeApiKey()) {
     return [];
   }
 
@@ -57,15 +37,7 @@ export async function fetchSuggestedVideos(videoId) {
     const items = searchData?.items;
     if (!Array.isArray(items)) return [];
 
-    return items
-      .filter((item) => item.id?.videoId && item.id.videoId !== videoId)
-      .map((item) => ({
-        videoId: item.id.videoId,
-        title: item.snippet?.title || '',
-        thumbnailUrl: item.snippet?.thumbnails?.medium?.url || item.snippet?.thumbnails?.default?.url || '',
-        channelTitle: item.snippet?.channelTitle || '',
-      }))
-      .filter((video) => video.title && video.thumbnailUrl);
+    return mapSearchItems(items, videoId);
   } catch (err) {
     console.warn('Unexpected error fetching suggested videos:', err?.message || err);
     return [];
