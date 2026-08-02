@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Declares Pop-up Video as a Direct Share target for plain-text shares
+     (e.g. "Share" from the YouTube app), so Android has a well-defined
+     target to consider for the share sheet's prominent top row instead of
+     relying solely on the user's own historical usage frequency to
+     promote it there. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="com.guyhovav.popupvideo.MainActivity">
+        <data android:mimeType="text/plain" />
+        <category android:name="com.guyhovav.popupvideo.category.TEXT_SHARE_TARGET" />
+    </share-target>
+
+    <shortcut
+        android:shortcutId="share_link"
+        android:enabled="true"
+        android:icon="@mipmap/ic_launcher"
+        android:shortcutShortLabel="@string/app_name">
+        <categories android:name="com.guyhovav.popupvideo.category.TEXT_SHARE_TARGET" />
+    </shortcut>
+</shortcuts>
