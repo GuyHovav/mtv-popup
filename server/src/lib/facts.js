@@ -12,16 +12,17 @@ export { computeFactCount };
  * tailored as a Gemini one, so it's not a lesser experience for the visitor.
  */
 export async function generateFacts({ videoId, title, author, durationSeconds, factCount, geniusContext, wikiContext }) {
+  const supportContext = [geniusContext, wikiContext].filter(Boolean).join('\n');
   try {
     const { facts, videoGrounded } = await callGemini({ videoId, title, author, durationSeconds, factCount, geniusContext, wikiContext });
-    return { facts: postProcessFacts(facts, durationSeconds, { videoGrounded }), degraded: false, videoGrounded };
+    return { facts: postProcessFacts(facts, durationSeconds, { videoGrounded, supportContext }), degraded: false, videoGrounded };
   } catch (err) {
     console.warn('Gemini failed, trying OpenAI fallback:', err?.message || err);
   }
 
   try {
     const facts = await callOpenAI({ title, author, durationSeconds, factCount, geniusContext, wikiContext });
-    return { facts: postProcessFacts(facts, durationSeconds), degraded: false, videoGrounded: false };
+    return { facts: postProcessFacts(facts, durationSeconds, { supportContext }), degraded: false, videoGrounded: false };
   } catch (err) {
     console.warn('OpenAI fallback also failed, using generic facts:', err?.message || err);
   }
