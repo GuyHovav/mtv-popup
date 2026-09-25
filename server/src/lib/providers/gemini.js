@@ -46,13 +46,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function requestFacts({ title, author, durationSeconds, factCount, geniusContext, videoId, withVideo }) {
+async function requestFacts({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId, withVideo }) {
   const prompt = buildUserPrompt({
     title,
     author,
     durationSeconds,
     factCount,
-    geniusContext,
+    geniusContext, wikiContext,
     videoAttached: withVideo,
   });
 
@@ -125,7 +125,7 @@ async function requestFacts({ title, author, durationSeconds, factCount, geniusC
  * text-only prompt before the error propagates to the OpenAI fallback.
  * Transient errors (429/503) are retried within each mode.
  */
-export async function callGemini({ videoId, title, author, durationSeconds, factCount, geniusContext }) {
+export async function callGemini({ videoId, title, author, durationSeconds, factCount, geniusContext, wikiContext }) {
   if (!process.env.GEMINI_API_KEY) {
     throw new Error('GEMINI_API_KEY not configured');
   }
@@ -133,13 +133,13 @@ export async function callGemini({ videoId, title, author, durationSeconds, fact
   const canAttachVideo = Boolean(videoId) && durationSeconds <= MAX_VIDEO_INPUT_SECONDS;
   if (canAttachVideo) {
     try {
-      const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, videoId, withVideo: true });
+      const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId, withVideo: true });
       return { facts, videoGrounded: true };
     } catch (err) {
       console.warn('Gemini video-input request failed, retrying text-only:', err?.message || err);
     }
   }
 
-  const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, videoId, withVideo: false });
+  const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId, withVideo: false });
   return { facts, videoGrounded: false };
 }

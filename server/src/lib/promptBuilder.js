@@ -25,8 +25,9 @@ Style:
   of this specific song, lean toward general/genre-level facts phrased
   honestly (e.g. "Songs from this era often...") rather than inventing false
   specifics about this exact track.
-- If real Genius song metadata is provided below (writer/producer credits,
-  sample/interpolation/cover relationships, curated "about" text), treat it
+- If real song context is provided below (Genius metadata — writer/producer
+  credits, sample/interpolation/cover relationships, curated "about" text —
+  and/or Wikipedia article intros for the song and artist), treat it
   as verified and specific — not something to hedge or guess at. It's
   curated data, distinct from your own background knowledge. Prioritize
   weaving in samples, interpolations, or writer/producer credits from it
@@ -75,10 +76,13 @@ function computeSectionWindows(durationSeconds) {
   ];
 }
 
-export function buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext, videoAttached }) {
+export function buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoAttached }) {
   const avgGapSeconds = Math.round(durationSeconds / factCount);
   const geniusBlock = geniusContext
     ? `\n\nReal song metadata from Genius (credits, sample/interpolation relationships, curated "about" text — use this for specific, accurate facts):\n${geniusContext}\n`
+    : '';
+  const wikiBlock = wikiContext
+    ? `\n\nBackground from Wikipedia (encyclopedic context on the song's history, chart performance, and the artist — use this for specific, accurate facts):\n${wikiContext}\n`
     : '';
 
   // With the actual video attached the model can see the real structure and
@@ -109,7 +113,7 @@ instead.)`;
 
   return `Song: "${title}"
 Channel/Artist (from YouTube metadata): "${author}"
-Video duration: ${durationSeconds} seconds (${formatMMSS(durationSeconds)})${geniusBlock}
+Video duration: ${durationSeconds} seconds (${formatMMSS(durationSeconds)})${geniusBlock}${wikiBlock}
 
 ${contextGuide}
 

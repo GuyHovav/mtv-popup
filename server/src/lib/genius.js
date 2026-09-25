@@ -26,7 +26,7 @@ const RELEVANT_RELATIONSHIP_TYPES = new Set([
   'covered_by',
 ]);
 
-function cleanAuthor(author) {
+export function cleanAuthor(author) {
   let a = author || '';
   // Split camelCase channel names ("RickAstleyVEVO" -> "Rick Astley VEVO")
   // so the word-boundary strips below actually have something to match.
@@ -39,7 +39,7 @@ function cleanAuthor(author) {
   return a.replace(/\s+/g, ' ').trim();
 }
 
-function cleanTitle(title) {
+export function cleanTitle(title) {
   let t = title || '';
   // Strip bracketed/parenthetical noise: "(Official Video)", "[4K Remaster]".
   t = t.replace(/[([][^)\]]*[)\]]/g, ' ');
@@ -65,7 +65,7 @@ function buildSearchQuery(title, author, effectiveArtist, isCover) {
   return `${effectiveArtist || cleanAuthor(author)} ${cleanTitle(title)}`.replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LEN);
 }
 
-function normalize(s) {
+export function normalize(s) {
   return (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
