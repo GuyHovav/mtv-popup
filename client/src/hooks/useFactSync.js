@@ -3,7 +3,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const POLL_INTERVAL_MS = 250;
 const SEEK_THRESHOLD_SECONDS = 1.5;
 const LOOKBACK_WINDOW_SECONDS = 2;
-const BALLOON_DISPLAY_MS = 9000;
 const MIN_GAP_MS = 3000;
 const MAX_GAP_MS = 5000;
 const YT_PLAYER_STATE_PLAYING = 1;
@@ -17,9 +16,26 @@ function randomGapMs() {
   return MIN_GAP_MS + Math.random() * (MAX_GAP_MS - MIN_GAP_MS);
 }
 
+// How long a balloon stays up scales with how much there is to read,
+// paced for a relatively slow reader (~140 wpm, i.e. ~420ms per word)
+// plus a fixed beat to notice the balloon and find its text. A one-liner
+// still hangs around long enough to register (floor), and even the
+// longest fact can't park on screen forever (ceiling) — a tap dismisses
+// early either way.
+const BASE_DISPLAY_MS = 2500;
+const PER_WORD_MS = 420;
+const MIN_DISPLAY_MS = 6000;
+const MAX_DISPLAY_MS = 18000;
+
+export function displayDurationMs(text) {
+  const wordCount = (text || '').trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(MAX_DISPLAY_MS, Math.max(MIN_DISPLAY_MS, BASE_DISPLAY_MS + wordCount * PER_WORD_MS));
+}
+
 /**
  * Shows exactly one "balloon" at a time, matching the classic Pop-up Video
- * pace: a fact is visible for ~9s, then — a random 3-5s after it closes —
+ * pace: a fact is visible for as long as its word count warrants (see
+ * displayDurationMs), then — a random 3-5s after it closes —
  * the next one appears. `time_seconds` still gates *which* fact is next
  * (advancing only once playback has reached it) and drives seek handling,
  * but the actual on-screen cadence is paced by the gap timer, not strictly
@@ -72,13 +88,14 @@ export function useFactSync(player, facts) {
       const color = COLORS[colorIndexRef.current % COLORS.length];
       colorIndexRef.current += 1;
       const id = balloonIdCounter++;
+      const durationMs = displayDurationMs(fact.text);
 
-      commitActive({ id, text: fact.text, slot, color });
+      commitActive({ id, text: fact.text, slot, color, durationMs });
 
       dismissTimerRef.current = setTimeout(() => {
         commitActive(null);
         readyAtRef.current = Date.now() + randomGapMs();
-      }, BALLOON_DISPLAY_MS);
+      }, durationMs);
     }
 
     const interval = setInterval(() => {

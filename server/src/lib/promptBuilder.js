@@ -152,10 +152,12 @@ export function factsJsonSchema() {
 }
 
 export function computeFactCount(durationSeconds) {
-  // A balloon shows for ~9s then waits ~3-5s before the next one — a full
-  // cycle of roughly 13s. Target that density (classic Pop-up Video's
-  // near-continuous pacing) rather than a handful of sparse facts.
-  return Math.min(80, Math.max(8, Math.round(durationSeconds / 13)));
+  // A balloon now shows for as long as its word count warrants (the client
+  // paces for a slow reader — ~12s for a typical 2-sentence fact), then
+  // waits ~3-5s before the next one: a full cycle of roughly 16s. Target
+  // that density (classic Pop-up Video's near-continuous pacing) rather
+  // than a handful of sparse facts — or a backlog that can never show.
+  return Math.min(80, Math.max(8, Math.round(durationSeconds / 16)));
 }
 
 // No LLM reliably keeps a fact's assigned `time_seconds` consistent with

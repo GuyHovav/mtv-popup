@@ -20,7 +20,13 @@
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.4);
   pointer-events: auto;
   cursor: pointer;
-  animation: balloon-pop 9s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  /* Entrance and exit are separate fixed-speed animations; the exit's
+     start time comes from --balloon-exit-delay, set inline per balloon so
+     total on-screen time can scale with the fact's word count without the
+     pop motion itself stretching or compressing. */
+  animation:
+    balloon-pop-in 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) forwards,
+    balloon-pop-out 0.55s ease-in var(--balloon-exit-delay, 8450ms) forwards;
   transition: filter 0.15s ease;
 }
 
@@ -31,20 +37,23 @@
   filter: brightness(1.08);
 }
 
-@keyframes balloon-pop {
+@keyframes balloon-pop-in {
   0% {
     transform: scale(0.3) rotate(-8deg);
     opacity: 0;
   }
-  6% {
+  60% {
     transform: scale(1.08) rotate(3deg);
     opacity: 1;
   }
-  10% {
+  100% {
     transform: scale(1) rotate(0deg);
     opacity: 1;
   }
-  94% {
+}
+
+@keyframes balloon-pop-out {
+  0% {
     transform: scale(1) rotate(0deg);
     opacity: 1;
   }
@@ -56,20 +65,25 @@
 
 @media (prefers-reduced-motion: reduce) {
   .balloon {
-    animation: balloon-fade 9s ease-in-out forwards;
+    animation:
+      balloon-fade-in 0.5s ease-in-out forwards,
+      balloon-fade-out 0.55s ease-in-out var(--balloon-exit-delay, 8450ms) forwards;
   }
 
-  @keyframes balloon-fade {
-    0% {
+  @keyframes balloon-fade-in {
+    from {
       opacity: 0;
     }
-    8% {
+    to {
       opacity: 1;
     }
-    94% {
+  }
+
+  @keyframes balloon-fade-out {
+    from {
       opacity: 1;
     }
-    100% {
+    to {
       opacity: 0;
     }
   }

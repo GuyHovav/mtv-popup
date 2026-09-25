@@ -6,7 +6,14 @@ export default function PopupLayer({ balloon, onDismiss }) {
     // mounts/unmounts) so screen readers reliably announce each new fact.
     <div className="popup-layer" aria-live="polite" aria-atomic="true">
       {balloon && (
-        <Balloon key={balloon.id} text={balloon.text} slot={balloon.slot} color={balloon.color} onDismiss={onDismiss} />
+        <Balloon
+          key={balloon.id}
+          text={balloon.text}
+          slot={balloon.slot}
+          color={balloon.color}
+          durationMs={balloon.durationMs}
+          onDismiss={onDismiss}
+        />
       )}
     </div>
   );
