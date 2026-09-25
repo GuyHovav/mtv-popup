@@ -75,26 +75,43 @@ function computeSectionWindows(durationSeconds) {
   ];
 }
 
-export function buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext }) {
+export function buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext, videoAttached }) {
   const avgGapSeconds = Math.round(durationSeconds / factCount);
   const geniusBlock = geniusContext
     ? `\n\nReal song metadata from Genius (credits, sample/interpolation relationships, curated "about" text — use this for specific, accurate facts):\n${geniusContext}\n`
     : '';
-  const structureGuide = computeSectionWindows(durationSeconds)
-    .map((w) => `- ${w.label}: roughly ${formatMMSS(w.start)}-${formatMMSS(w.end)}`)
-    .join('\n');
+
+  // With the actual video attached the model can see the real structure and
+  // visuals, so it gets pushed toward what's literally on screen; the
+  // conventional-structure heuristic only helps in the blind (text-only)
+  // case, where it stays as before.
+  const contextGuide = videoAttached
+    ? `The actual video is attached — you can watch it. Use that directly:
+- Make MOMENT-SPECIFIC facts about what is literally visible or audible on
+  screen around that timestamp: props, cars, outfits, locations, dance
+  moves, cameos, scene changes, instruments entering. Call the thing out
+  ("that gold Cadillac...", "this diner scene...") and, when you have real
+  trivia about it, attach it — a visual callout plus a true fact is the
+  ideal balloon.
+- Set each fact's time_seconds to when that thing is actually on screen.
+  You are watching the video, so timestamps should be observed, not guessed.
+- Still mix in GENERAL facts (artist, writing, chart history) between the
+  visual ones, per the style rules.`
+    : `Most pop/rock songs follow a conventional structure. As a rough default
+when you don't have more specific knowledge of this song's actual
+structure, moments typically fall around:
+${computeSectionWindows(durationSeconds)
+  .map((w) => `- ${w.label}: roughly ${formatMMSS(w.start)}-${formatMMSS(w.end)}`)
+  .join('\n')}
+(This is only a fallback convention, not a rule — if you have better,
+specific knowledge of this particular song's real structure, use that
+instead.)`;
 
   return `Song: "${title}"
 Channel/Artist (from YouTube metadata): "${author}"
 Video duration: ${durationSeconds} seconds (${formatMMSS(durationSeconds)})${geniusBlock}
 
-Most pop/rock songs follow a conventional structure. As a rough default
-when you don't have more specific knowledge of this song's actual
-structure, moments typically fall around:
-${structureGuide}
-(This is only a fallback convention, not a rule — if you have better,
-specific knowledge of this particular song's real structure, use that
-instead.)
+${contextGuide}
 
 Generate exactly ${factCount} pop-up trivia facts, spaced out across the
 full ${durationSeconds}-second duration (roughly every ${avgGapSeconds}s,
@@ -267,15 +284,37 @@ export function diversifyOpeners(facts) {
   });
 }
 
+// The schema types time_seconds as an integer but nothing stops a model
+// from placing a fact past the video's end (where it would silently never
+// show) or at the literal first/last second (where it reads oddly). Clamp
+// into the same 2s-inset range repositionFactsByLanguage uses for its edge
+// windows.
+export function clampFactTimes(facts, durationSeconds) {
+  const min = Math.min(2, durationSeconds);
+  const max = Math.max(min, durationSeconds - 2);
+  return facts.map((fact) => ({
+    ...fact,
+    time_seconds: Math.min(max, Math.max(min, Math.round(fact.time_seconds || 0))),
+  }));
+}
+
 /**
  * Runs every deterministic quality pass on raw LLM output, in order:
- * fix up timestamps against positional language, drop near-duplicate
- * facts, then trim overused generic lead-ins. Not applied to
- * buildFallbackFacts's static templates — those are already curated.
+ * fix up timestamps against positional language, clamp timestamps into the
+ * video's duration, drop near-duplicate facts, then trim overused generic
+ * lead-ins. Not applied to buildFallbackFacts's static templates — those
+ * are already curated.
+ *
+ * When the facts came from a model that actually watched the video
+ * (videoGrounded), the positional-language repositioning is skipped: those
+ * timestamps are observed, and "correcting" them against a generic
+ * pop-song-structure heuristic would break accurate ones (a video really
+ * can show its outro imagery early). Clamping and dedup still apply.
  */
-export function postProcessFacts(facts, durationSeconds) {
-  const repositioned = repositionFactsByLanguage(facts, durationSeconds);
-  const deduped = removeDuplicateFacts(repositioned);
+export function postProcessFacts(facts, durationSeconds, { videoGrounded = false } = {}) {
+  const repositioned = videoGrounded ? facts : repositionFactsByLanguage(facts, durationSeconds);
+  const clamped = clampFactTimes(repositioned, durationSeconds).sort((a, b) => a.time_seconds - b.time_seconds);
+  const deduped = removeDuplicateFacts(clamped);
   return diversifyOpeners(deduped);
 }
 

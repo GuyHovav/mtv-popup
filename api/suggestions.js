@@ -1,6 +1,4 @@
-import { fetchSuggestedVideos } from '../server/src/lib/suggestions.js';
-
-const VIDEO_ID_RE = /^[\w-]{11}$/;
+import { handleSuggestionsRequest } from '../server/src/lib/handlers.js';
 
 // Vercel serverless function — mirrors server/src/routes/suggestions.js
 // exactly, just on Vercel's plain (req, res) handler signature instead of
@@ -12,13 +10,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { videoId } = req.query;
-
-  if (typeof videoId !== 'string' || !VIDEO_ID_RE.test(videoId)) {
-    res.status(400).json({ error: 'invalid_video_id' });
-    return;
+  const { status, body, headers } = await handleSuggestionsRequest(req);
+  for (const [name, value] of Object.entries(headers || {})) {
+    res.setHeader(name, value);
   }
-
-  const suggestions = await fetchSuggestedVideos(videoId);
-  res.status(200).json({ suggestions });
+  res.status(status).json(body);
 }

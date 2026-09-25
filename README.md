@@ -15,6 +15,21 @@ AI-generated trivia "balloons" pop up over the video at a near-continuous pace a
   fails outright, and finally to a small set of generic hardcoded facts if both
   providers fail — so your API keys never touch the browser, and a provider hiccup
   never surfaces as a broken experience.
+- **Video-grounded facts**: for videos up to 20 minutes, the Gemini request
+  attaches the public YouTube URL as actual *video input* (at low media
+  resolution to keep token cost down), so the model watches the video and can
+  call out what's literally on screen — the gold Cadillac, the outfit, the
+  location — with observed timestamps. If video ingestion fails for any reason
+  (region-locked video, ingest limits), the request silently retries with the
+  original text-only prompt.
+- **Guardrails** (`server/src/lib/guards.js`): the public endpoints are
+  rate-limited per client IP (facts spend LLM tokens; search/suggestions spend
+  YouTube API quota), fact batches are cached in-memory per video, and the
+  server re-fetches the video's title/author itself via oEmbed rather than
+  trusting the request body — so forged metadata can't reach the prompt or
+  poison the cache. The caches are per-instance (no database, by design), so
+  on Vercel they're best-effort; search/suggestions additionally set
+  `s-maxage` so Vercel's CDN caches those responses properly.
 - `server/src/lib/` holds all the actual logic (prompt building, provider calls,
   fallback, positional-language correction) and has zero Express dependency —
   `server/src/routes/facts.js` is just the local-dev Express wrapper around it, and

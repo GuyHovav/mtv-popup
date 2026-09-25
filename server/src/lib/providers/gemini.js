@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { GoogleGenAI, Type, MediaResolution } from '@google/genai';
 import { SYSTEM_PROMPT, buildUserPrompt, factsJsonSchema } from '../promptBuilder.js';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -34,18 +34,31 @@ const TRANSIENT_STATUS_CODES = new Set([429, 503]);
 const MAX_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 1000;
 
+// Gemini can take a public YouTube URL as actual video input, which is what
+// lets facts reference things literally on screen ("that gold Cadillac...")
+// with observed timestamps instead of guessed ones. Video input costs real
+// tokens even at MEDIA_RESOLUTION_LOW (~100 tokens/second of video, so
+// ~20 min ≈ 120k tokens), so cap how long a video gets attached — beyond
+// the cap, generation falls back to the original text-only prompt.
+const MAX_VIDEO_INPUT_SECONDS = 20 * 60;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Calls Gemini and returns a facts array, or throws. Retries transient
- * errors (429/503) a few times before giving up.
- */
-export async function callGemini({ title, author, durationSeconds, factCount, geniusContext }) {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error('GEMINI_API_KEY not configured');
-  }
+async function requestFacts({ title, author, durationSeconds, factCount, geniusContext, videoId, withVideo }) {
+  const prompt = buildUserPrompt({
+    title,
+    author,
+    durationSeconds,
+    factCount,
+    geniusContext,
+    videoAttached: withVideo,
+  });
+
+  const parts = withVideo
+    ? [{ fileData: { fileUri: `https://www.youtube.com/watch?v=${videoId}` } }, { text: prompt }]
+    : [{ text: prompt }];
 
   let response;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
@@ -55,7 +68,7 @@ export async function callGemini({ title, author, durationSeconds, factCount, ge
       // even standard -flash here.
       response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-lite',
-        contents: buildUserPrompt({ title, author, durationSeconds, factCount, geniusContext }),
+        contents: [{ role: 'user', parts }],
         config: {
           systemInstruction: SYSTEM_PROMPT,
           responseMimeType: 'application/json',
@@ -63,6 +76,10 @@ export async function callGemini({ title, author, durationSeconds, factCount, ge
           // Explicit ceiling since factCount can now reach 80 for long videos —
           // don't rely on the model's default output cap.
           maxOutputTokens: 16000,
+          // Low resolution keeps video-input token cost roughly a third of
+          // the default; balloon-worthy visuals (cars, outfits, locations)
+          // survive the downsampling fine. Harmless on text-only requests.
+          mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW,
         },
       });
       break;
@@ -97,4 +114,32 @@ export async function callGemini({ title, author, durationSeconds, factCount, ge
   }
 
   return parsed.facts;
+}
+
+/**
+ * Calls Gemini and returns { facts, videoGrounded }, or throws. Tries with
+ * the YouTube video attached as real video input first (when the video is
+ * short enough), so facts can describe what's actually on screen; if that
+ * fails for any reason — region-locked/private video, YouTube-ingest
+ * limits, an unsupported video — it retries once with the original
+ * text-only prompt before the error propagates to the OpenAI fallback.
+ * Transient errors (429/503) are retried within each mode.
+ */
+export async function callGemini({ videoId, title, author, durationSeconds, factCount, geniusContext }) {
+  if (!process.env.GEMINI_API_KEY) {
+    throw new Error('GEMINI_API_KEY not configured');
+  }
+
+  const canAttachVideo = Boolean(videoId) && durationSeconds <= MAX_VIDEO_INPUT_SECONDS;
+  if (canAttachVideo) {
+    try {
+      const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, videoId, withVideo: true });
+      return { facts, videoGrounded: true };
+    } catch (err) {
+      console.warn('Gemini video-input request failed, retrying text-only:', err?.message || err);
+    }
+  }
+
+  const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, videoId, withVideo: false });
+  return { facts, videoGrounded: false };
 }
