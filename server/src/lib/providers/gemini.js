@@ -42,11 +42,16 @@ const RETRY_DELAY_MS = 1000;
 // the cap, generation falls back to the original text-only prompt.
 const MAX_VIDEO_INPUT_SECONDS = 20 * 60;
 
+// Hard cap on the single video-input attempt (see callGemini) — generous
+// against observed ~10-25s generations, but strict enough to leave the
+// text-only and OpenAI fallbacks room inside the 60s function budget.
+const VIDEO_ATTEMPT_TIMEOUT_MS = 35000;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function requestFacts({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId, withVideo }) {
+async function requestFacts({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId, withVideo, maxAttempts = MAX_ATTEMPTS, attemptTimeoutMs }) {
   const prompt = buildUserPrompt({
     title,
     author,
@@ -61,7 +66,9 @@ async function requestFacts({ title, author, durationSeconds, factCount, geniusC
     : [{ text: prompt }];
 
   let response;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const abortController = new AbortController();
+    const abortTimer = attemptTimeoutMs ? setTimeout(() => abortController.abort(), attemptTimeoutMs) : null;
     try {
       // gemini-2.5-flash-lite: the cheapest/fastest tier in the 2.5 family —
       // plenty capable for short trivia generation, no need for -pro or
@@ -80,6 +87,7 @@ async function requestFacts({ title, author, durationSeconds, factCount, geniusC
           // the default; balloon-worthy visuals (cars, outfits, locations)
           // survive the downsampling fine. Harmless on text-only requests.
           mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW,
+          abortSignal: abortController.signal,
         },
       });
       break;
@@ -88,12 +96,14 @@ async function requestFacts({ title, author, durationSeconds, factCount, geniusC
       // couple of times before giving up, rather than failing on the
       // first transient hiccup.
       const isTransient = TRANSIENT_STATUS_CODES.has(err?.status);
-      if (isTransient && attempt < MAX_ATTEMPTS) {
-        console.warn(`Gemini request failed (attempt ${attempt}/${MAX_ATTEMPTS}), retrying:`, err?.message || err);
+      if (isTransient && attempt < maxAttempts) {
+        console.warn(`Gemini request failed (attempt ${attempt}/${maxAttempts}), retrying:`, err?.message || err);
         await sleep(RETRY_DELAY_MS * attempt);
         continue;
       }
       throw err;
+    } finally {
+      if (abortTimer) clearTimeout(abortTimer);
     }
   }
 
@@ -130,10 +140,21 @@ export async function callGemini({ videoId, title, author, durationSeconds, fact
     throw new Error('GEMINI_API_KEY not configured');
   }
 
+  // The video-input attempt is the expensive, failure-prone leg of the
+  // chain, and everything after it (text-only Gemini with retries, then
+  // OpenAI) still has to fit inside the serverless function's time budget.
+  // So it gets exactly one attempt with a hard abort — a slow-failing
+  // video ingest must degrade to text-only facts, not blow the whole
+  // request past the platform timeout and surface as a user-facing error.
   const canAttachVideo = Boolean(videoId) && durationSeconds <= MAX_VIDEO_INPUT_SECONDS;
   if (canAttachVideo) {
     try {
-      const facts = await requestFacts({ title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId, withVideo: true });
+      const facts = await requestFacts({
+        title, author, durationSeconds, factCount, geniusContext, wikiContext, videoId,
+        withVideo: true,
+        maxAttempts: 1,
+        attemptTimeoutMs: VIDEO_ATTEMPT_TIMEOUT_MS,
+      });
       return { facts, videoGrounded: true };
     } catch (err) {
       console.warn('Gemini video-input request failed, retrying text-only:', err?.message || err);
