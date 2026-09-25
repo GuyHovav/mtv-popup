@@ -109,3 +109,16 @@ test('postProcessFacts applies the borrowing filter via supportContext', () => {
   assert.equal(result.length, 1);
   assert.match(result[0].text, /ordinary fact/);
 });
+
+test('enforceMinSpacing thins facts packed tighter than the display cadence', async () => {
+  const { enforceMinSpacing } = await import('../src/lib/promptBuilder.js');
+  const dense = Array.from({ length: 10 }, (_, i) => ({ time_seconds: 5 + i * 10, text: `fact ${i}` }));
+  const spaced = enforceMinSpacing(dense, 14);
+  assert.ok(spaced.length < dense.length);
+  for (let i = 1; i < spaced.length; i += 1) {
+    assert.ok(spaced[i].time_seconds - spaced[i - 1].time_seconds >= 14);
+  }
+  // Already-sparse facts pass through untouched.
+  const sparse = [{ time_seconds: 10, text: 'a' }, { time_seconds: 40, text: 'b' }];
+  assert.deepEqual(enforceMinSpacing(sparse, 14), sparse);
+});

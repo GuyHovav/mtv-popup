@@ -235,6 +235,27 @@ export function repositionFactsByLanguage(facts, durationSeconds) {
   return repositioned.sort((a, b) => a.time_seconds - b.time_seconds);
 }
 
+// The model sometimes ignores "spread across the full duration" and packs
+// facts ~10s apart (observed: 31 facts crammed into the first 5 minutes of
+// an 8-minute video). The client shows one balloon at a time and a real
+// display cycle runs ~16s (word-count display + gap), so anything denser
+// builds cumulative lag — a fact timestamped 2:50 ends up on screen at
+// 5:00, pointing at a cameo that's long gone. Enforce the client's
+// sustainable cadence server-side by dropping facts that follow their
+// predecessor too closely; fewer facts that appear on time beat more
+// facts that all run late.
+const MIN_FACT_SPACING_SECONDS = 14;
+
+export function enforceMinSpacing(facts, minGapSeconds = MIN_FACT_SPACING_SECONDS) {
+  const kept = [];
+  for (const fact of facts) {
+    if (kept.length === 0 || fact.time_seconds - kept[kept.length - 1].time_seconds >= minGapSeconds) {
+      kept.push(fact);
+    }
+  }
+  return kept;
+}
+
 function normalizeForComparison(text) {
   return (text || '')
     .toLowerCase()
@@ -335,7 +356,8 @@ export function clampFactTimes(facts, durationSeconds) {
 /**
  * Runs every deterministic quality pass on raw LLM output, in order:
  * drop borrowed-music claims unsupported by the provided context, fix up
- * timestamps against positional language, clamp timestamps into the
+ * timestamps against positional language, thin out facts packed tighter
+ * than the client's display cadence, clamp timestamps into the
  * video's duration, drop near-duplicate facts, then trim overused generic
  * lead-ins. Not applied to buildFallbackFacts's static templates — those
  * are already curated.
@@ -351,7 +373,8 @@ export function postProcessFacts(facts, durationSeconds, { videoGrounded = false
   const repositioned = videoGrounded ? supported : repositionFactsByLanguage(supported, durationSeconds);
   const clamped = clampFactTimes(repositioned, durationSeconds).sort((a, b) => a.time_seconds - b.time_seconds);
   const deduped = removeDuplicateFacts(clamped);
-  return diversifyOpeners(deduped);
+  const spaced = enforceMinSpacing(deduped);
+  return diversifyOpeners(spaced);
 }
 
 export function buildFallbackFacts(durationSeconds) {

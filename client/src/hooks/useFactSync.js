@@ -3,6 +3,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 const POLL_INTERVAL_MS = 250;
 const SEEK_THRESHOLD_SECONDS = 1.5;
 const LOOKBACK_WINDOW_SECONDS = 2;
+// How far past its timestamp a fact may still be shown before it's skipped
+// as stale (see the catch-up loop below). Generous enough to absorb one
+// long predecessor balloon, small enough that visual callouts still
+// roughly match what's on screen.
+const STALE_FACT_SECONDS = 25;
 const MIN_GAP_MS = 3000;
 const MAX_GAP_MS = 5000;
 const YT_PLAYER_STATE_PLAYING = 1;
@@ -116,15 +121,28 @@ export function useFactSync(player, facts) {
         clearDismissTimer();
         commitActive(null);
         readyAtRef.current = Date.now();
-      } else if (
-        activeRef.current === null &&
-        Date.now() >= readyAtRef.current &&
-        nextIndexRef.current < sortedFacts.length &&
-        sortedFacts[nextIndexRef.current].time_seconds <= currentTime
-      ) {
-        const fact = sortedFacts[nextIndexRef.current];
-        nextIndexRef.current += 1;
-        showFact(fact);
+      } else {
+        // A fact whose moment is long gone shouldn't show at all — a
+        // "that's Rebecca Black!" balloon minutes after the cameo is worse
+        // than silence. This also stops lag from compounding: without it,
+        // one slow stretch delays every subsequent fact further.
+        while (
+          nextIndexRef.current < sortedFacts.length &&
+          sortedFacts[nextIndexRef.current].time_seconds < currentTime - STALE_FACT_SECONDS
+        ) {
+          nextIndexRef.current += 1;
+        }
+
+        if (
+          activeRef.current === null &&
+          Date.now() >= readyAtRef.current &&
+          nextIndexRef.current < sortedFacts.length &&
+          sortedFacts[nextIndexRef.current].time_seconds <= currentTime
+        ) {
+          const fact = sortedFacts[nextIndexRef.current];
+          nextIndexRef.current += 1;
+          showFact(fact);
+        }
       }
 
       prevTimeRef.current = currentTime;
