@@ -70,11 +70,14 @@ async function requestFacts({ title, author, durationSeconds, factCount, geniusC
     const abortController = new AbortController();
     const abortTimer = attemptTimeoutMs ? setTimeout(() => abortController.abort(), attemptTimeoutMs) : null;
     try {
-      // gemini-2.5-flash-lite: the cheapest/fastest tier in the 2.5 family —
-      // plenty capable for short trivia generation, no need for -pro or
-      // even standard -flash here.
+      // Standard gemini-2.5-flash (upgraded from -lite after the facts it
+      // wrote read bland and repetitive): noticeably better writing and
+      // visual recognition, still ~a cent per clip. Thinking is disabled —
+      // trivia writing doesn't benefit enough to justify the latency, and
+      // the video-input attempt has to fit its 35s abort budget.
+      // Override with FACTS_MODEL in the environment to experiment.
       response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash-lite',
+        model: process.env.FACTS_MODEL || 'gemini-2.5-flash',
         contents: [{ role: 'user', parts }],
         config: {
           systemInstruction: SYSTEM_PROMPT,
@@ -87,6 +90,7 @@ async function requestFacts({ title, author, durationSeconds, factCount, geniusC
           // the default; balloon-worthy visuals (cars, outfits, locations)
           // survive the downsampling fine. Harmless on text-only requests.
           mediaResolution: MediaResolution.MEDIA_RESOLUTION_LOW,
+          thinkingConfig: { thinkingBudget: 0 },
           abortSignal: abortController.signal,
         },
       });

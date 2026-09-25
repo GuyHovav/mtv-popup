@@ -275,7 +275,9 @@ function jaccardSimilarity(wordsA, wordsB) {
   return union === 0 ? 0 : intersection / union;
 }
 
-const DUPLICATE_SIMILARITY_THRESHOLD = 0.5;
+// 0.45 (was 0.5): rephrased restatements of the same fact were sliding
+// under the old threshold.
+const DUPLICATE_SIMILARITY_THRESHOLD = 0.45;
 
 // The model occasionally restates the same underlying trivia twice in a
 // long batch, just phrased differently. Drop later near-duplicates rather
