@@ -22,6 +22,11 @@ AI-generated trivia "balloons" pop up over the video at a near-continuous pace a
   location — with observed timestamps. If video ingestion fails for any reason
   (region-locked video, ingest limits), the request silently retries with the
   original text-only prompt.
+- **Free knowledge layer** (`server/src/lib/wikipedia.js`): each request also
+  looks the song and artist up on English Wikipedia (no API key) and feeds the
+  article intros into the prompt, alongside the optional Genius metadata. Both
+  lookups run in parallel, are confidence-checked (a wrong article would be
+  worse than none), and fail soft to nothing.
 - **Guardrails** (`server/src/lib/guards.js`): the public endpoints are
   rate-limited per client IP (facts spend LLM tokens; search/suggestions spend
   YouTube API quota), fact batches are cached in-memory per video, and the

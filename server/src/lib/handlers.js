@@ -8,6 +8,7 @@
 import { validateFactsRequest, ValidationError } from './validate.js';
 import { computeFactCount, generateFacts } from './facts.js';
 import { fetchGeniusContext } from './genius.js';
+import { fetchWikipediaContext } from './wikipedia.js';
 import { fetchVideoMeta } from './oembed.js';
 import { searchVideos } from './search.js';
 import { fetchSuggestedVideos } from './suggestions.js';
@@ -52,7 +53,13 @@ export async function handleFactsRequest(req) {
   const author = meta?.author || validated.author;
 
   const factCount = computeFactCount(durationSeconds);
-  const geniusContext = await fetchGeniusContext({ title, author });
+  // Both context sources fail soft to null and are independent — fetch in
+  // parallel so the free knowledge layer doesn't add latency on top of
+  // Genius.
+  const [geniusContext, wikiContext] = await Promise.all([
+    fetchGeniusContext({ title, author }),
+    fetchWikipediaContext({ title, author }),
+  ]);
 
   try {
     const { facts, degraded, videoGrounded } = await generateFacts({
@@ -62,6 +69,7 @@ export async function handleFactsRequest(req) {
       durationSeconds,
       factCount,
       geniusContext,
+      wikiContext,
     });
     const body = { videoId, facts, degraded, videoGrounded };
     // Degraded batches are the generic hardcoded templates — don't let a
