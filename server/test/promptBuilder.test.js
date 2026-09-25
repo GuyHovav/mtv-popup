@@ -81,3 +81,31 @@ test('computeFactCount stays within its bounds', () => {
   assert.equal(computeFactCount(30), 8);
   assert.equal(computeFactCount(21600), 80);
 });
+
+test('dropUnsupportedBorrowingClaims removes sample claims when context is silent', async () => {
+  const { dropUnsupportedBorrowingClaims } = await import('../src/lib/promptBuilder.js');
+  const facts = [
+    { time_seconds: 10, text: 'That synth hook is a sample from a 1981 Tom Tom Club track.' },
+    { time_seconds: 20, text: 'The video was shot in West London.' },
+    { time_seconds: 30, text: 'This melody interpolates an older disco hit.' },
+  ];
+  const noContext = dropUnsupportedBorrowingClaims(facts, 'Wikipedia on the song: a 1987 pop song.');
+  assert.deepEqual(noContext.map((f) => f.time_seconds), [20]);
+
+  // When the provided context itself documents borrowing, claims survive.
+  const withContext = dropUnsupportedBorrowingClaims(facts, 'Samples/Interpolations/Covers:\n- samples: "Genius of Love"');
+  assert.equal(withContext.length, 3);
+
+  // Empty/absent context also strips the claims.
+  assert.equal(dropUnsupportedBorrowingClaims(facts, '').length, 1);
+});
+
+test('postProcessFacts applies the borrowing filter via supportContext', () => {
+  const facts = [
+    { time_seconds: 50, text: 'This track famously samples an obscure funk record.' },
+    { time_seconds: 100, text: 'A perfectly ordinary fact about the artist.' },
+  ];
+  const result = postProcessFacts(facts, 240, { supportContext: 'Wikipedia on the artist: a singer.' });
+  assert.equal(result.length, 1);
+  assert.match(result[0].text, /ordinary fact/);
+});

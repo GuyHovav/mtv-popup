@@ -25,6 +25,17 @@ Style:
   of this specific song, lean toward general/genre-level facts phrased
   honestly (e.g. "Songs from this era often...") rather than inventing false
   specifics about this exact track.
+- HARD RULE on borrowed music: never claim this song samples, interpolates,
+  covers, or is built on another specific track unless that exact
+  relationship appears in the provided song context below. This is the
+  single most common way plausible-sounding trivia turns out flat wrong —
+  when in doubt, describe the sound ("that squelchy synth bass...") without
+  attributing it to another song.
+- Every fact that names a specific person, work, date, or number must be
+  something you could defend: either it appears in the provided context, or
+  it's a fact you are genuinely certain of about this exact song/artist. A
+  vaguer true fact always beats a specific invented one — an invented
+  "fact" on screen is the one thing this show can't survive.
 - If real song context is provided below (Genius metadata — writer/producer
   credits, sample/interpolation/cover relationships, curated "about" text —
   and/or Wikipedia article intros for the song and artist), treat it
@@ -290,6 +301,23 @@ export function diversifyOpeners(facts) {
   });
 }
 
+// The observed worst hallucination class: confidently attributing this
+// song's sound to a sample/interpolation of another specific track (the
+// claim is precise, checkable, and usually wrong). The prompt forbids it
+// unless the provided Genius/Wikipedia context states the relationship —
+// and this pass enforces that deterministically: when the context never
+// mentions borrowing at all, any sample/interpolation claim in the output
+// is by definition invented, so the whole fact is dropped. When the
+// context does mention borrowing we keep the facts; matching each claim to
+// its exact source is beyond a regex, and the prompt has real data to work
+// from in that case.
+const BORROWING_CLAIM_PATTERN = /\b(?:sampl(?:es?|ed|ing)|interpolat(?:es?|ed|ion))\b/i;
+
+export function dropUnsupportedBorrowingClaims(facts, supportContext) {
+  if (BORROWING_CLAIM_PATTERN.test(supportContext || '')) return facts;
+  return facts.filter((fact) => !BORROWING_CLAIM_PATTERN.test(fact.text || ''));
+}
+
 // The schema types time_seconds as an integer but nothing stops a model
 // from placing a fact past the video's end (where it would silently never
 // show) or at the literal first/last second (where it reads oddly). Clamp
@@ -306,7 +334,8 @@ export function clampFactTimes(facts, durationSeconds) {
 
 /**
  * Runs every deterministic quality pass on raw LLM output, in order:
- * fix up timestamps against positional language, clamp timestamps into the
+ * drop borrowed-music claims unsupported by the provided context, fix up
+ * timestamps against positional language, clamp timestamps into the
  * video's duration, drop near-duplicate facts, then trim overused generic
  * lead-ins. Not applied to buildFallbackFacts's static templates — those
  * are already curated.
@@ -317,8 +346,9 @@ export function clampFactTimes(facts, durationSeconds) {
  * pop-song-structure heuristic would break accurate ones (a video really
  * can show its outro imagery early). Clamping and dedup still apply.
  */
-export function postProcessFacts(facts, durationSeconds, { videoGrounded = false } = {}) {
-  const repositioned = videoGrounded ? facts : repositionFactsByLanguage(facts, durationSeconds);
+export function postProcessFacts(facts, durationSeconds, { videoGrounded = false, supportContext = '' } = {}) {
+  const supported = dropUnsupportedBorrowingClaims(facts, supportContext);
+  const repositioned = videoGrounded ? supported : repositionFactsByLanguage(supported, durationSeconds);
   const clamped = clampFactTimes(repositioned, durationSeconds).sort((a, b) => a.time_seconds - b.time_seconds);
   const deduped = removeDuplicateFacts(clamped);
   return diversifyOpeners(deduped);
