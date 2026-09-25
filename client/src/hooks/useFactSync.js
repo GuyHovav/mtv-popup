@@ -8,8 +8,8 @@ const LOOKBACK_WINDOW_SECONDS = 2;
 // long predecessor balloon, small enough that visual callouts still
 // roughly match what's on screen.
 const STALE_FACT_SECONDS = 25;
-const MIN_GAP_MS = 3000;
-const MAX_GAP_MS = 5000;
+const MIN_GAP_MS = 1500;
+const MAX_GAP_MS = 2500;
 const YT_PLAYER_STATE_PLAYING = 1;
 
 const SLOTS = ['top-left', 'top-right', 'bottom-left', 'bottom-right'];

@@ -110,6 +110,9 @@ export function buildUserPrompt({ title, author, durationSeconds, factCount, gen
   ideal balloon.
 - Set each fact's time_seconds to when that thing is actually on screen.
   You are watching the video, so timestamps should be observed, not guessed.
+- Cover the ENTIRE video, through its final minute — including any intro or
+  outro skit, extended scene, or credits. Long unnarrated stretches are a
+  failure; if the tail isn't the song, comment on what's happening in it.
 - Still mix in GENERAL facts (artist, writing, chart history) between the
   visual ones, per the style rules.`
     : `Most pop/rock songs follow a conventional structure. As a rough default
@@ -244,7 +247,7 @@ export function repositionFactsByLanguage(facts, durationSeconds) {
 // sustainable cadence server-side by dropping facts that follow their
 // predecessor too closely; fewer facts that appear on time beat more
 // facts that all run late.
-const MIN_FACT_SPACING_SECONDS = 14;
+const MIN_FACT_SPACING_SECONDS = 12;
 
 export function enforceMinSpacing(facts, minGapSeconds = MIN_FACT_SPACING_SECONDS) {
   const kept = [];
