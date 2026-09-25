@@ -1,19 +1,11 @@
 import { Router } from 'express';
-import { fetchSuggestedVideos } from '../lib/suggestions.js';
-
-const VIDEO_ID_RE = /^[\w-]{11}$/;
+import { handleSuggestionsRequest } from '../lib/handlers.js';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
-  const { videoId } = req.query;
-
-  if (typeof videoId !== 'string' || !VIDEO_ID_RE.test(videoId)) {
-    return res.status(400).json({ error: 'invalid_video_id' });
-  }
-
-  const suggestions = await fetchSuggestedVideos(videoId);
-  return res.json({ suggestions });
+  const { status, body, headers } = await handleSuggestionsRequest(req);
+  return res.status(status).set(headers || {}).json(body);
 });
 
 export default router;

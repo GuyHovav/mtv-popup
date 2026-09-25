@@ -11,20 +11,20 @@ export { computeFactCount };
  * tier counts as `degraded` — a successful OpenAI response is just as
  * tailored as a Gemini one, so it's not a lesser experience for the visitor.
  */
-export async function generateFacts({ title, author, durationSeconds, factCount, geniusContext }) {
+export async function generateFacts({ videoId, title, author, durationSeconds, factCount, geniusContext }) {
   try {
-    const facts = await callGemini({ title, author, durationSeconds, factCount, geniusContext });
-    return { facts: postProcessFacts(facts, durationSeconds), degraded: false };
+    const { facts, videoGrounded } = await callGemini({ videoId, title, author, durationSeconds, factCount, geniusContext });
+    return { facts: postProcessFacts(facts, durationSeconds, { videoGrounded }), degraded: false, videoGrounded };
   } catch (err) {
     console.warn('Gemini failed, trying OpenAI fallback:', err?.message || err);
   }
 
   try {
     const facts = await callOpenAI({ title, author, durationSeconds, factCount, geniusContext });
-    return { facts: postProcessFacts(facts, durationSeconds), degraded: false };
+    return { facts: postProcessFacts(facts, durationSeconds), degraded: false, videoGrounded: false };
   } catch (err) {
     console.warn('OpenAI fallback also failed, using generic facts:', err?.message || err);
   }
 
-  return { facts: buildFallbackFacts(durationSeconds), degraded: true };
+  return { facts: buildFallbackFacts(durationSeconds), degraded: true, videoGrounded: false };
 }

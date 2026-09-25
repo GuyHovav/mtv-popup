@@ -130,10 +130,14 @@ export default function App() {
         setDegraded(Boolean(data.degraded));
         setStatus('ready');
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
         setStatus('error');
-        setErrorMessage("Couldn't generate trivia for this video right now. Please try again.");
+        setErrorMessage(
+          err?.status === 429
+            ? 'Easy there — too many videos in a row. Give it a minute and try again.'
+            : "Couldn't generate trivia for this video right now. Please try again.",
+        );
       });
 
     return () => {

@@ -19,7 +19,7 @@ function randomGapMs() {
 
 /**
  * Shows exactly one "balloon" at a time, matching the classic Pop-up Video
- * pace: a fact is visible for ~6.5s, then — a random 3-5s after it closes —
+ * pace: a fact is visible for ~9s, then — a random 3-5s after it closes —
  * the next one appears. `time_seconds` still gates *which* fact is next
  * (advancing only once playback has reached it) and drives seek handling,
  * but the actual on-screen cadence is paced by the gap timer, not strictly

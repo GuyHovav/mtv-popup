@@ -1,17 +1,11 @@
 import { Router } from 'express';
-import { searchVideos } from '../lib/search.js';
+import { handleSearchRequest } from '../lib/handlers.js';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
-  const { q } = req.query;
-
-  if (typeof q !== 'string' || q.trim().length === 0) {
-    return res.status(400).json({ error: 'missing_query' });
-  }
-
-  const results = await searchVideos(q);
-  return res.json({ results });
+  const { status, body, headers } = await handleSearchRequest(req);
+  return res.status(status).set(headers || {}).json(body);
 });
 
 export default router;

@@ -1,4 +1,4 @@
-import { searchVideos } from '../server/src/lib/search.js';
+import { handleSearchRequest } from '../server/src/lib/handlers.js';
 
 // Vercel serverless function — mirrors server/src/routes/search.js
 // exactly, just on Vercel's plain (req, res) handler signature instead of
@@ -10,13 +10,9 @@ export default async function handler(req, res) {
     return;
   }
 
-  const { q } = req.query;
-
-  if (typeof q !== 'string' || q.trim().length === 0) {
-    res.status(400).json({ error: 'missing_query' });
-    return;
+  const { status, body, headers } = await handleSearchRequest(req);
+  for (const [name, value] of Object.entries(headers || {})) {
+    res.setHeader(name, value);
   }
-
-  const results = await searchVideos(q);
-  res.status(200).json({ results });
+  res.status(status).json(body);
 }
