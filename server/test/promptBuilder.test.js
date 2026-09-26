@@ -132,5 +132,5 @@ test('enforceMinSpacing relaxes clusters forward instead of dropping facts', asy
     { time_seconds: 280, text: 'a' },
     { time_seconds: 284, text: 'b' },
   ];
-  assert.equal(enforceMinSpacing(tail, 300, 12).length, 1);
+  assert.equal(enforceMinSpacing(tail, 290, 12).length, 1);
 });
