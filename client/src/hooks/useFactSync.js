@@ -8,6 +8,11 @@ const LOOKBACK_WINDOW_SECONDS = 2;
 // long predecessor balloon, small enough that visual callouts still
 // roughly match what's on screen.
 const STALE_FACT_SECONDS = 25;
+// ...and how far ahead of its timestamp a fact may show when the screen is
+// free. Without this, a short balloon closes and the next one sits waiting
+// for its exact second — dead air. Slightly early is harmless (visual
+// callouts tend to describe scenes, which span seconds anyway).
+const EARLY_SHOW_SECONDS = 8;
 const MIN_GAP_MS = 1500;
 const MAX_GAP_MS = 2500;
 const YT_PLAYER_STATE_PLAYING = 1;
@@ -137,7 +142,7 @@ export function useFactSync(player, facts) {
           activeRef.current === null &&
           Date.now() >= readyAtRef.current &&
           nextIndexRef.current < sortedFacts.length &&
-          sortedFacts[nextIndexRef.current].time_seconds <= currentTime
+          sortedFacts[nextIndexRef.current].time_seconds <= currentTime + EARLY_SHOW_SECONDS
         ) {
           const fact = sortedFacts[nextIndexRef.current];
           nextIndexRef.current += 1;
