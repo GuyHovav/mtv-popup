@@ -110,15 +110,27 @@ test('postProcessFacts applies the borrowing filter via supportContext', () => {
   assert.match(result[0].text, /ordinary fact/);
 });
 
-test('enforceMinSpacing thins facts packed tighter than the display cadence', async () => {
+test('enforceMinSpacing relaxes clusters forward instead of dropping facts', async () => {
   const { enforceMinSpacing } = await import('../src/lib/promptBuilder.js');
-  const dense = Array.from({ length: 10 }, (_, i) => ({ time_seconds: 5 + i * 10, text: `fact ${i}` }));
-  const spaced = enforceMinSpacing(dense, 14);
-  assert.ok(spaced.length < dense.length);
-  for (let i = 1; i < spaced.length; i += 1) {
-    assert.ok(spaced[i].time_seconds - spaced[i - 1].time_seconds >= 14);
-  }
+  // A cluster at 100/104/108 followed by a hole: all three survive,
+  // sliding forward by the minimum gap.
+  const clustered = [
+    { time_seconds: 100, text: 'a' },
+    { time_seconds: 104, text: 'b' },
+    { time_seconds: 108, text: 'c' },
+    { time_seconds: 170, text: 'd' },
+  ];
+  const relaxed = enforceMinSpacing(clustered, 300, 12);
+  assert.deepEqual(relaxed.map((f) => f.time_seconds), [100, 112, 124, 170]);
+
   // Already-sparse facts pass through untouched.
   const sparse = [{ time_seconds: 10, text: 'a' }, { time_seconds: 40, text: 'b' }];
-  assert.deepEqual(enforceMinSpacing(sparse, 14), sparse);
+  assert.deepEqual(enforceMinSpacing(sparse, 300, 12), sparse);
+
+  // Facts pushed past the end of the video are dropped.
+  const tail = [
+    { time_seconds: 280, text: 'a' },
+    { time_seconds: 284, text: 'b' },
+  ];
+  assert.equal(enforceMinSpacing(tail, 300, 12).length, 1);
 });

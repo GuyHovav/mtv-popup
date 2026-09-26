@@ -166,12 +166,12 @@ export function factsJsonSchema() {
 }
 
 export function computeFactCount(durationSeconds) {
-  // A balloon now shows for as long as its word count warrants (the client
-  // paces for a slow reader — ~12s for a typical 2-sentence fact), then
-  // waits ~3-5s before the next one: a full cycle of roughly 16s. Target
-  // that density (classic Pop-up Video's near-continuous pacing) rather
-  // than a handful of sparse facts — or a backlog that can never show.
-  return Math.min(80, Math.max(8, Math.round(durationSeconds / 16)));
+  // A balloon shows for as long as its word count warrants (~11s for a
+  // typical 2-sentence fact at slow-reader pace) plus a 1.5-2.5s gap: a
+  // full cycle of roughly 13s. Target that density (classic Pop-up
+  // Video's near-continuous pacing) — the spacing relaxation pass absorbs
+  // any clustering, so denser is safe.
+  return Math.min(80, Math.max(8, Math.round(durationSeconds / 13)));
 }
 
 // No LLM reliably keeps a fact's assigned `time_seconds` consistent with
@@ -238,25 +238,26 @@ export function repositionFactsByLanguage(facts, durationSeconds) {
   return repositioned.sort((a, b) => a.time_seconds - b.time_seconds);
 }
 
-// The model sometimes ignores "spread across the full duration" and packs
-// facts ~10s apart (observed: 31 facts crammed into the first 5 minutes of
-// an 8-minute video). The client shows one balloon at a time and a real
-// display cycle runs ~16s (word-count display + gap), so anything denser
-// builds cumulative lag — a fact timestamped 2:50 ends up on screen at
-// 5:00, pointing at a cameo that's long gone. Enforce the client's
-// sustainable cadence server-side by dropping facts that follow their
-// predecessor too closely; fewer facts that appear on time beat more
-// facts that all run late.
+// The model tends to cluster facts (several within a few seconds, then a
+// long hole), and the client can only show one balloon per ~13s cycle.
+// Dropping the clustered ones (the first version of this pass) traded lag
+// for dead air — it left 30-40s holes. Instead, relax clusters forward:
+// each fact keeps its own timestamp unless it crowds its predecessor, in
+// which case it slides just far enough ahead. A visual fact can shift a
+// little later than its moment (the client's stale-skip caps how far
+// facts may run behind playback anyway), but every fact survives and the
+// holes get filled. Facts pushed past the end of the video are dropped.
 const MIN_FACT_SPACING_SECONDS = 12;
 
-export function enforceMinSpacing(facts, minGapSeconds = MIN_FACT_SPACING_SECONDS) {
-  const kept = [];
+export function enforceMinSpacing(facts, durationSeconds, minGapSeconds = MIN_FACT_SPACING_SECONDS) {
+  const relaxed = [];
   for (const fact of facts) {
-    if (kept.length === 0 || fact.time_seconds - kept[kept.length - 1].time_seconds >= minGapSeconds) {
-      kept.push(fact);
-    }
+    const prev = relaxed[relaxed.length - 1];
+    const t = prev ? Math.max(fact.time_seconds, prev.time_seconds + minGapSeconds) : fact.time_seconds;
+    if (t > durationSeconds - 2) break;
+    relaxed.push(t === fact.time_seconds ? fact : { ...fact, time_seconds: t });
   }
-  return kept;
+  return relaxed;
 }
 
 function normalizeForComparison(text) {
@@ -378,7 +379,7 @@ export function postProcessFacts(facts, durationSeconds, { videoGrounded = false
   const repositioned = videoGrounded ? supported : repositionFactsByLanguage(supported, durationSeconds);
   const clamped = clampFactTimes(repositioned, durationSeconds).sort((a, b) => a.time_seconds - b.time_seconds);
   const deduped = removeDuplicateFacts(clamped);
-  const spaced = enforceMinSpacing(deduped);
+  const spaced = enforceMinSpacing(deduped, durationSeconds);
   return diversifyOpeners(spaced);
 }
 
